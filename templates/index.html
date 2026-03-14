@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GhostCitation — 參考文獻真偽檢測</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent: #818cf8;
+            --accent-hover: #6366f1;
+            --green: #34d399;
+            --red: #f87171;
+            --yellow: #fbbf24;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-size: 2.2rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent), #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+        }
+
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+            background: var(--surface);
+        }
+
+        .upload-zone:hover, .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(129, 140, 248, 0.05);
+        }
+
+        .upload-zone input[type="file"] { display: none; }
+
+        .upload-zone .icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .upload-zone p { color: var(--text-muted); }
+        .upload-zone .formats { font-size: 0.85rem; margin-top: 0.5rem; }
+
+        .btn {
+            display: inline-block;
+            padding: 0.7rem 1.8rem;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: var(--accent-hover); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #status {
+            text-align: center;
+            margin: 1.5rem 0;
+            color: var(--text-muted);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 1rem 0;
+            display: none;
+        }
+
+        .progress-bar .fill {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+            border-radius: 3px;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .summary-card {
+            background: var(--surface);
+            border-radius: 10px;
+            padding: 1.2rem;
+            text-align: center;
+            border: 1px solid var(--border);
+        }
+
+        .summary-card .num {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .summary-card .label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.3rem;
+        }
+
+        .num.verified { color: var(--green); }
+        .num.suspicious { color: var(--yellow); }
+        .num.not-found { color: var(--red); }
+
+        .results { margin-top: 1.5rem; }
+
+        .ref-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.2rem;
+            margin-bottom: 0.8rem;
+            position: relative;
+        }
+
+        .ref-card .verdict-badge {
+            display: inline-block;
+            padding: 0.2rem 0.7rem;
+            border-radius: 20px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-verified { background: rgba(52, 211, 153, 0.15); color: var(--green); }
+        .badge-suspicious { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+        .badge-not-found { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+
+        .ref-card .ref-raw {
+            margin-top: 0.6rem;
+            font-size: 0.92rem;
+            line-height: 1.5;
+            color: var(--text);
+        }
+
+        .ref-card .ref-details {
+            margin-top: 0.5rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        .ref-card .ref-number {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-bottom: 0.3rem;
+        }
+
+        .hidden { display: none !important; }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        footer a { color: var(--accent); text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>GhostCitation</h1>
+            <p>上傳論文，自動檢測參考文獻是否為 AI 捏造</p>
+        </header>
+
+        <div class="upload-zone" id="uploadZone">
+            <span class="icon">&#128196;</span>
+            <p>拖曳檔案至此處，或點擊選擇檔案</p>
+            <p class="formats">支援格式：PDF、DOCX（上限 20 MB）</p>
+            <input type="file" id="fileInput" accept=".pdf,.docx">
+        </div>
+
+        <div class="progress-bar" id="progressBar">
+            <div class="fill" id="progressFill"></div>
+        </div>
+
+        <p id="status"></p>
+
+        <div id="summarySection" class="hidden">
+            <div class="summary">
+                <div class="summary-card">
+                    <div class="num" id="totalCount">0</div>
+                    <div class="label">總共</div>
+                </div>
+                <div class="summary-card">
+                    <div class="num verified" id="verifiedCount">0</div>
+                    <div class="label">已驗證</div>
+                </div>
+                <div class="summary-card">
+                    <div class="num suspicious" id="suspiciousCount">0</div>
+                    <div class="label">可疑</div>
+                </div>
+                <div class="summary-card">
+                    <div class="num not-found" id="notFoundCount">0</div>
+                    <div class="label">未找到</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="results" id="results"></div>
+
+        <footer>
+            <p>GhostCitation — 開源參考文獻驗證工具 |
+                <a href="https://github.com/torrentpien/GhostCitation" target="_blank">GitHub</a>
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+        const summarySection = document.getElementById('summarySection');
+        const resultsDiv = document.getElementById('results');
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('drag-over');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (!['pdf', 'docx'].includes(ext)) {
+                status.textContent = '僅支援 PDF 和 DOCX 檔案';
+                return;
+            }
+
+            // Reset UI
+            resultsDiv.innerHTML = '';
+            summarySection.classList.add('hidden');
+            progressBar.style.display = 'block';
+            progressFill.style.width = '10%';
+            status.textContent = `正在解析「${file.name}」中的參考文獻...`;
+
+            // Upload and extract
+            const formData = new FormData();
+            formData.append('file', file);
+
+            let refs;
+            try {
+                const resp = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    status.textContent = data.error || '上傳失敗';
+                    progressBar.style.display = 'none';
+                    return;
+                }
+                refs = data.references;
+                status.textContent = `找到 ${data.count} 筆參考文獻，開始驗證...`;
+                progressFill.style.width = '30%';
+            } catch (e) {
+                status.textContent = '上傳過程發生錯誤';
+                progressBar.style.display = 'none';
+                return;
+            }
+
+            // Check references
+            try {
+                const resp = await fetch('/check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ references: refs }),
+                });
+                const data = await resp.json();
+                progressFill.style.width = '100%';
+
+                if (!resp.ok) {
+                    status.textContent = data.error || '驗證失敗';
+                    return;
+                }
+
+                status.textContent = '驗證完成！';
+                displayResults(data);
+            } catch (e) {
+                status.textContent = '驗證過程發生錯誤';
+            }
+        }
+
+        function displayResults(data) {
+            const { results, summary } = data;
+
+            // Summary
+            summarySection.classList.remove('hidden');
+            document.getElementById('totalCount').textContent = summary.total;
+            document.getElementById('verifiedCount').textContent = summary.verified;
+            document.getElementById('suspiciousCount').textContent = summary.suspicious;
+            document.getElementById('notFoundCount').textContent = summary.not_found;
+
+            // Result cards
+            resultsDiv.innerHTML = '';
+            results.forEach((r, i) => {
+                const verdictLabel = {
+                    'verified': '已驗證',
+                    'suspicious': '可疑',
+                    'not_found': '未找到',
+                }[r.verdict] || r.verdict;
+
+                const badgeClass = {
+                    'verified': 'badge-verified',
+                    'suspicious': 'badge-suspicious',
+                    'not_found': 'badge-not-found',
+                }[r.verdict] || '';
+
+                let detailsHtml = '';
+                if (r.note) {
+                    detailsHtml += `<div class="ref-details">&#9888; ${escapeHtml(r.note)}</div>`;
+                }
+                if (r.verified_title) {
+                    detailsHtml += `<div class="ref-details">&#10004; 比對標題: ${escapeHtml(r.verified_title)}</div>`;
+                }
+                if (r.doi) {
+                    detailsHtml += `<div class="ref-details">DOI: ${escapeHtml(r.doi)}</div>`;
+                }
+                const sources = r.checks ? r.checks.map(c => c.source).join(', ') : '';
+                if (sources) {
+                    detailsHtml += `<div class="ref-details">查詢來源: ${escapeHtml(sources)}</div>`;
+                }
+
+                const card = document.createElement('div');
+                card.className = 'ref-card';
+                card.innerHTML = `
+                    <div class="ref-number">#${i + 1}</div>
+                    <span class="verdict-badge ${badgeClass}">${verdictLabel}</span>
+                    <div class="ref-raw">${escapeHtml(r.raw)}</div>
+                    ${detailsHtml}
+                `;
+                resultsDiv.appendChild(card);
+            });
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
