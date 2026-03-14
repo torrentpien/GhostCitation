@@ -410,6 +410,10 @@
 
                 let detailsHtml = '';
 
+                // Show reference type
+                const typeLabel = r.ref_type === 'non_academic' ? '非學術文獻' : '學術文獻';
+                detailsHtml += `<div class="ref-details">類型: ${typeLabel}</div>`;
+
                 // Show verified match info
                 if (r.verified_title) {
                     detailsHtml += `<div class="ref-details">&#10004; 比對標題: ${escapeHtml(r.verified_title)}</div>`;
@@ -421,6 +425,9 @@
                 }
                 if (r.verified_year) {
                     detailsHtml += `<div class="ref-details">&#10004; 實際年份: ${escapeHtml(r.verified_year)}</div>`;
+                }
+                if (r.verified_url) {
+                    detailsHtml += `<div class="ref-details">&#10004; 來源連結: <a href="${escapeHtml(r.verified_url)}" target="_blank" style="color:var(--accent)">${escapeHtml(r.verified_url)}</a></div>`;
                 }
 
                 // Show mismatches

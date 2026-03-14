@@ -148,9 +148,6 @@ _AUTHOR_YEAR_START = re.compile(
     r"|"
     # CJK author: Chinese chars (2-4) followed by （year）or (year)
     r"[\u4e00-\u9fff\u3400-\u4dbf]{2,4}\s*[（(]\d{4}"
-    r"|"
-    # Organization/all-caps start
-    r"[A-Z][A-Za-z]+\s+[A-Z][a-z]+\s+[A-Z]"  # e.g. "Council for Economic..."
     r")"
 )
 
@@ -158,17 +155,49 @@ _AUTHOR_YEAR_START = re.compile(
 def _looks_like_complete_ref(text: str) -> bool:
     """Check if text looks like a complete reference entry.
 
-    A complete entry has a year AND substantial content after the year
-    (title + journal/publisher info).
+    A complete entry has a year AND substantial content after the year,
+    AND ends with something that looks like a reference ending:
+    page numbers, DOI, URL, publisher, volume/issue, or closing punctuation.
     """
     m = re.search(r"[（(]\d{4}[a-z]?[）)]", text)
     if not m:
         return False
     after_year = text[m.end():]
-    # Should have meaningful content after year (title, journal, etc.)
-    # At least ~30 chars of content with a period (sentence end)
     clean = re.sub(r"\s+", " ", after_year).strip()
-    return len(clean) > 30 and "." in clean
+    if len(clean) < 30 or "." not in clean:
+        return False
+
+    # Check the ending of the text looks like a proper reference tail
+    tail = text.rstrip().rstrip(".")
+    # Ends with page numbers: 123-456, 123–456, 1-8
+    if re.search(r"\d+\s*[-–]\s*\d+\.?\s*$", text.rstrip()):
+        return True
+    # Ends with volume/issue: 22（9）, 30(5), etc.
+    if re.search(r"\d+\s*[（(]\d+[）)]\s*\.?\s*$", text.rstrip()):
+        return True
+    # Ends with DOI
+    if re.search(r"10\.\d{4,9}/\S+\s*$", text.rstrip()):
+        return True
+    # Ends with URL
+    if re.search(r"https?://\S+\s*[）).]?\s*$", text.rstrip()):
+        return True
+    # Ends with publisher/place pattern: "Publisher." or "Press."
+    if re.search(r"(?:Press|Publishing|Publisher|Publications|Routledge|Springer|Wiley|Elsevier|Cambridge|Oxford)\s*\.?\s*$", text.rstrip(), re.IGNORECASE):
+        return True
+    # Ends with "） " or "）." (closing bracket for CJK references)
+    if re.search(r"[）)]\s*\.?\s*$", text.rstrip()):
+        return True
+    # Ends with a single number (standalone page or issue)
+    if re.search(r",\s*\d+\s*\.?\s*$", text.rstrip()):
+        return True
+
+    # Ends with a word followed by period (journal name, book title, etc.)
+    # but only if there's enough content after the year
+    if len(clean) > 50 and re.search(r"[A-Za-z\u4e00-\u9fff]{2,}\.\s*$", text.rstrip()):
+        return True
+
+    # Fallback: if text is very long (>200 chars after year), likely complete
+    return len(clean) > 200
 
 
 def _parse_author_year_refs(ref_section: str) -> list[str]:

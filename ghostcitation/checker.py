@@ -1,4 +1,7 @@
-"""Verify references by searching Google Scholar (SerpAPI) and CrossRef.
+"""Verify references by searching Google Scholar (SerpAPI), CrossRef, and Google.
+
+Classifies references as academic or non-academic (media, government, think tank),
+then routes to the appropriate verification source.
 
 Distinguishes between:
 - verified: reference found and metadata matches
@@ -246,6 +249,149 @@ def search_google_scholar(title: str, author: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Google web search via SerpAPI (for non-academic references)
+# ---------------------------------------------------------------------------
+
+def search_google(title: str, author: str = "", raw: str = "") -> dict:
+    """Search Google (web) using SerpAPI for non-academic references."""
+    if not SERPAPI_KEY:
+        return {"found": False, "source": "google", "error": "no_api_key"}
+
+    # Build a targeted query
+    query = f'"{title}"'
+    if author and len(author) > 2:
+        query += f" {author}"
+
+    try:
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": SERPAPI_KEY,
+            "num": 5,
+            "hl": "zh-TW",
+        }
+        resp = _SESSION.get(SERPAPI_URL, params=params, timeout=20)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("organic_results", [])
+            for result in results[:5]:
+                result_title = result.get("title", "")
+                snippet = result.get("snippet", "")
+                link = result.get("link", "")
+
+                # Check if the title or snippet matches
+                title_sim = _similarity(title, result_title)
+                snippet_sim = _similarity(title, snippet) if snippet else 0
+
+                if title_sim >= 0.50 or snippet_sim >= 0.40:
+                    # Try to extract year from snippet
+                    year_match = re.search(r"\b((?:19|20)\d{2})\b", snippet)
+                    found_year = year_match.group(1) if year_match else None
+
+                    return {
+                        "found": True,
+                        "title": result_title,
+                        "authors": [],
+                        "year": found_year,
+                        "url": link,
+                        "title_similarity": round(max(title_sim, snippet_sim), 3),
+                        "source": "google",
+                    }
+        elif resp.status_code == 429:
+            return {"found": False, "error": "rate_limited", "source": "google"}
+    except Exception as e:
+        logger.warning("Google search failed for '%s': %s", title, e)
+
+    return {"found": False, "source": "google"}
+
+
+# ---------------------------------------------------------------------------
+# Reference type classification
+# ---------------------------------------------------------------------------
+
+# Keywords that indicate non-academic references
+_NON_ACADEMIC_INDICATORS = [
+    # Media / news
+    r"未來商務", r"環境資訊中心", r"商業周刊", r"天下雜誌", r"聯合新聞網", r"自由時報",
+    r"新聞", r"報導", r"搜尋日期", r"Accessed",
+    r"Forbes", r"BBC", r"CNN", r"Reuters", r"Bloomberg", r"The Guardian",
+    r"New York Times", r"Washington Post",
+    # Government / institutional
+    r"環境部", r"行政院", r"Ministry of", r"Administration",
+    r"Government", r"Agency", r"Bureau", r"Department of",
+    r"Executive Yuan", r"Legislative Yuan",
+    # Think tanks / organizations
+    r"World Bank", r"OECD", r"United Nations", r"IPCC", r"WHO",
+    r"交易所", r"Exchange",
+    # Websites / platforms
+    r"https?://(?!doi\.org)",
+]
+
+_NON_ACADEMIC_PATTERN = re.compile(
+    "|".join(_NON_ACADEMIC_INDICATORS),
+    re.IGNORECASE,
+)
+
+# Strong indicators of academic references
+_ACADEMIC_INDICATORS = [
+    r"Journal\b", r"Review\b", r"Quarterly\b", r"Proceedings\b",
+    r"Transactions\b", r"Letters\b", r"Annals\b", r"Research\b",
+    r"Economics\b", r"Science\b", r"Psychology\b", r"Sociology\b",
+    r"Vol\.", r"pp\.", r"doi:", r"10\.\d{4,}",
+    # Volume/issue pattern: "30（3）" or "30(3)" or "vol. 3"
+    r"\d+\s*[（(]\d+[）)]",
+    r"Springer", r"Elsevier", r"Wiley", r"Cambridge University Press",
+    r"Oxford University Press", r"Routledge", r"SAGE", r"Academic Press",
+]
+
+_ACADEMIC_PATTERN = re.compile(
+    "|".join(_ACADEMIC_INDICATORS),
+    re.IGNORECASE,
+)
+
+
+def classify_reference(ref: dict) -> str:
+    """Classify a reference as 'academic' or 'non_academic'.
+
+    Uses heuristics based on the raw text content.
+    """
+    raw = ref.get("raw", "")
+    title = ref.get("title", "")
+
+    # If it has a DOI, it's almost certainly academic
+    if ref.get("doi"):
+        return "academic"
+
+    has_academic = bool(_ACADEMIC_PATTERN.search(raw))
+    has_non_academic = bool(_NON_ACADEMIC_PATTERN.search(raw))
+
+    # If it has both indicators, check the primary content (before URLs)
+    # to decide — academic journal/volume patterns are strong signals
+    if has_academic:
+        return "academic"
+
+    if has_non_academic:
+        # Check if the non-academic signal is only in a trailing URL/accessed section
+        # that might belong to a merged next reference
+        first_url_pos = len(raw)
+        for m in re.finditer(r"https?://", raw):
+            first_url_pos = m.start()
+            break
+        primary = raw[:first_url_pos]
+        # Re-check: does the primary part (before URLs) still have non-academic signals?
+        if _NON_ACADEMIC_PATTERN.search(primary):
+            return "non_academic"
+        # Also check if primary part has academic signals
+        if _ACADEMIC_PATTERN.search(primary):
+            return "academic"
+        return "non_academic"
+
+    # Default to academic
+    return "academic"
+
+
+# ---------------------------------------------------------------------------
 # Mismatch analysis — distinguish fabricated vs misattributed
 # ---------------------------------------------------------------------------
 
@@ -314,8 +460,25 @@ def _analyze_match(ref: dict, match: dict) -> dict:
 # Main check logic
 # ---------------------------------------------------------------------------
 
+def _apply_match(result: dict, ref: dict, match: dict) -> dict:
+    """Apply a match result to the output, running mismatch analysis."""
+    analysis = _analyze_match(ref, match)
+    result["verdict"] = analysis["verdict"]
+    result["mismatches"] = analysis["mismatches"]
+    result["verified_title"] = match.get("title", "")
+    result["verified_authors"] = match.get("authors", [])
+    result["verified_year"] = match.get("year")
+    if match.get("url"):
+        result["verified_url"] = match["url"]
+    return result
+
+
 def check_reference(ref: dict) -> dict:
     """Check a single reference using multiple sources.
+
+    Routes non-academic references (media, government, think tank) through
+    Google web search first, and academic references through CrossRef /
+    Google Scholar.
 
     Returns a result dict with verdict:
     - 'verified': found and metadata matches
@@ -328,54 +491,58 @@ def check_reference(ref: dict) -> dict:
     year = ref.get("year")
     raw = ref.get("raw", "")
 
+    ref_type = classify_reference(ref)
+
     result = {
         "raw": raw,
         "title": title,
         "authors": authors,
         "year": year,
         "doi": doi,
+        "ref_type": ref_type,
         "checks": [],
         "mismatches": [],
         "verdict": "fabricated",
     }
 
-    # 1. If DOI is present, verify it first
+    # 1. If DOI is present, verify it first (always academic)
     if doi:
         doi_result = verify_doi(doi)
         result["checks"].append(doi_result)
         if doi_result["found"]:
-            analysis = _analyze_match(ref, doi_result)
-            result["verdict"] = analysis["verdict"]
-            result["mismatches"] = analysis["mismatches"]
-            result["verified_title"] = doi_result["title"]
-            result["verified_authors"] = doi_result.get("authors", [])
-            result["verified_year"] = doi_result.get("year")
-            return result
+            return _apply_match(result, ref, doi_result)
 
-    # 2. Search CrossRef by title
-    cr_result = search_crossref(title, authors)
-    result["checks"].append(cr_result)
-    if cr_result["found"]:
-        analysis = _analyze_match(ref, cr_result)
-        result["verdict"] = analysis["verdict"]
-        result["mismatches"] = analysis["mismatches"]
-        result["verified_title"] = cr_result["title"]
-        result["verified_authors"] = cr_result.get("authors", [])
-        result["verified_year"] = cr_result.get("year")
-        return result
+    # 2. Route based on reference type
+    if ref_type == "non_academic":
+        # Non-academic: try Google web search first
+        google_result = search_google(title, authors, raw)
+        result["checks"].append(google_result)
+        if google_result["found"]:
+            return _apply_match(result, ref, google_result)
 
-    # 3. Search Google Scholar via SerpAPI
-    time.sleep(0.5)
-    gs_result = search_google_scholar(title, authors)
-    result["checks"].append(gs_result)
-    if gs_result["found"]:
-        analysis = _analyze_match(ref, gs_result)
-        result["verdict"] = analysis["verdict"]
-        result["mismatches"] = analysis["mismatches"]
-        result["verified_title"] = gs_result["title"]
-        result["verified_authors"] = gs_result.get("authors", [])
-        result["verified_year"] = gs_result.get("year")
-        return result
+        # Fallback: also try CrossRef (some reports have DOIs)
+        cr_result = search_crossref(title, authors)
+        result["checks"].append(cr_result)
+        if cr_result["found"]:
+            return _apply_match(result, ref, cr_result)
+    else:
+        # Academic: CrossRef first, then Google Scholar
+        cr_result = search_crossref(title, authors)
+        result["checks"].append(cr_result)
+        if cr_result["found"]:
+            return _apply_match(result, ref, cr_result)
+
+        time.sleep(0.5)
+        gs_result = search_google_scholar(title, authors)
+        result["checks"].append(gs_result)
+        if gs_result["found"]:
+            return _apply_match(result, ref, gs_result)
+
+        # Last resort for academic: try Google web search
+        google_result = search_google(title, authors, raw)
+        result["checks"].append(google_result)
+        if google_result["found"]:
+            return _apply_match(result, ref, google_result)
 
     # Nothing found in any source
     result["verdict"] = "fabricated"
