@@ -9,6 +9,7 @@ from flask import Flask, render_template, request, jsonify, session
 from werkzeug.utils import secure_filename
 
 from ghostcitation.extractor import extract_references
+from ghostcitation import checker
 from ghostcitation.checker import check_references
 
 logging.basicConfig(level=logging.INFO)
@@ -77,13 +78,19 @@ def check():
         return jsonify({"error": "缺少參考文獻資料"}), 400
 
     refs = data["references"]
+
+    # Allow passing SerpAPI key from frontend
+    serpapi_key = data.get("serpapi_key", "")
+    if serpapi_key:
+        checker.SERPAPI_KEY = serpapi_key
+
     results = check_references(refs)
 
     summary = {
         "total": len(results),
         "verified": sum(1 for r in results if r["verdict"] == "verified"),
-        "suspicious": sum(1 for r in results if r["verdict"] == "suspicious"),
-        "not_found": sum(1 for r in results if r["verdict"] == "not_found"),
+        "misattributed": sum(1 for r in results if r["verdict"] == "misattributed"),
+        "fabricated": sum(1 for r in results if r["verdict"] == "fabricated"),
     }
 
     return jsonify({
