@@ -18,6 +18,7 @@ from difflib import SequenceMatcher
 from urllib.parse import quote_plus
 
 import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -214,13 +215,169 @@ def search_crossref(title: str, author: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Web scraping fallbacks (used when no SerpAPI key)
+# ---------------------------------------------------------------------------
+
+_SCRAPE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,zh-TW;q=0.8",
+}
+
+
+def _scrape_google_scholar(title: str, author: str = "") -> dict:
+    """Scrape Google Scholar directly when no SerpAPI key is available."""
+    query = title
+    if author:
+        first_author = author.split(",")[0].split("&")[0].strip()
+        if len(first_author) > 1:
+            query = f"{title} {first_author}"
+
+    try:
+        url = "https://scholar.google.com/scholar"
+        params = {"q": query, "hl": "en", "num": 5}
+        resp = _SESSION.get(
+            url, params=params, headers=_SCRAPE_HEADERS, timeout=20,
+        )
+
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            entries = soup.select("div.gs_ri")
+
+            for entry in entries[:5]:
+                # Title
+                title_el = entry.select_one("h3.gs_rt")
+                if not title_el:
+                    continue
+                # Remove [PDF], [HTML] etc. link prefixes
+                for span in title_el.select("span"):
+                    span.decompose()
+                result_title = title_el.get_text(strip=True)
+
+                sim = _similarity(title, result_title)
+                if sim < 0.60:
+                    continue
+
+                # Author/year info line
+                info_el = entry.select_one("div.gs_a")
+                info_text = info_el.get_text(strip=True) if info_el else ""
+
+                # Parse authors (before " - " separator)
+                gs_authors = []
+                year = None
+                if info_text:
+                    # Format: "Author1, Author2 - Journal, Year - Publisher"
+                    parts = info_text.split(" - ")
+                    if parts:
+                        author_part = parts[0].strip()
+                        gs_authors = [
+                            a.strip() for a in author_part.split(",")
+                            if a.strip() and not re.match(r"^\d{4}$", a.strip())
+                        ]
+                    year_match = re.search(r"\b((?:19|20)\d{2})\b", info_text)
+                    year = year_match.group(1) if year_match else None
+
+                # URL
+                link_el = title_el.select_one("a")
+                result_url = link_el["href"] if link_el and link_el.has_attr("href") else ""
+
+                return {
+                    "found": True,
+                    "title": result_title,
+                    "authors": gs_authors,
+                    "year": year,
+                    "url": result_url,
+                    "title_similarity": round(sim, 3),
+                    "source": "google_scholar_scrape",
+                }
+
+        elif resp.status_code == 429:
+            logger.warning("Google Scholar scrape rate-limited")
+            return {"found": False, "error": "rate_limited", "source": "google_scholar_scrape"}
+
+    except Exception as e:
+        logger.warning("Google Scholar scrape failed for '%s': %s", title, e)
+
+    return {"found": False, "source": "google_scholar_scrape"}
+
+
+def _scrape_google(title: str, author: str = "") -> dict:
+    """Scrape Google web search directly when no SerpAPI key is available."""
+    query = f'"{title}"'
+    if author and len(author) > 2:
+        first_author = author.split(",")[0].split("&")[0].strip()
+        if len(first_author) > 1:
+            query += f" {first_author}"
+
+    try:
+        url = "https://www.google.com/search"
+        params = {"q": query, "hl": "zh-TW", "num": 5}
+        resp = _SESSION.get(
+            url, params=params, headers=_SCRAPE_HEADERS, timeout=20,
+        )
+
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Google search results are in divs with class "g" or data-sokoban
+            for g in soup.select("div.g"):
+                # Title
+                title_el = g.select_one("h3")
+                if not title_el:
+                    continue
+                result_title = title_el.get_text(strip=True)
+
+                # Link
+                link_el = g.select_one("a")
+                link = link_el["href"] if link_el and link_el.has_attr("href") else ""
+
+                # Snippet
+                snippet_el = (
+                    g.select_one("div.VwiC3b")
+                    or g.select_one("span.st")
+                    or g.select_one("div[data-sncf]")
+                )
+                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+
+                title_sim = _similarity(title, result_title)
+                snippet_sim = _similarity(title, snippet) if snippet else 0
+
+                if title_sim >= 0.50 or snippet_sim >= 0.40:
+                    year_match = re.search(r"\b((?:19|20)\d{2})\b", snippet)
+                    found_year = year_match.group(1) if year_match else None
+
+                    return {
+                        "found": True,
+                        "title": result_title,
+                        "authors": [],
+                        "year": found_year,
+                        "url": link,
+                        "title_similarity": round(max(title_sim, snippet_sim), 3),
+                        "source": "google_scrape",
+                    }
+
+        elif resp.status_code == 429:
+            logger.warning("Google scrape rate-limited")
+            return {"found": False, "error": "rate_limited", "source": "google_scrape"}
+
+    except Exception as e:
+        logger.warning("Google scrape failed for '%s': %s", title, e)
+
+    return {"found": False, "source": "google_scrape"}
+
+
+# ---------------------------------------------------------------------------
 # Google Scholar via SerpAPI
 # ---------------------------------------------------------------------------
 
 def search_google_scholar(title: str, author: str = "") -> dict:
-    """Search Google Scholar using SerpAPI."""
+    """Search Google Scholar using SerpAPI, with scraping fallback."""
     if not SERPAPI_KEY:
-        return {"found": False, "source": "google_scholar", "error": "no_api_key"}
+        return _scrape_google_scholar(title, author)
 
     query = title
     if author:
@@ -279,9 +436,9 @@ def search_google_scholar(title: str, author: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 def search_google(title: str, author: str = "", raw: str = "") -> dict:
-    """Search Google (web) using SerpAPI for non-academic references."""
+    """Search Google (web) using SerpAPI, with scraping fallback."""
     if not SERPAPI_KEY:
-        return {"found": False, "source": "google", "error": "no_api_key"}
+        return _scrape_google(title, author)
 
     # Build a targeted query
     query = f'"{title}"'
@@ -578,7 +735,8 @@ def check_reference(ref: dict) -> dict:
         if gs_result["found"]:
             return _apply_match(result, ref, gs_result)
 
-        time.sleep(0.3)
+        step_delay = 1.0 if not SERPAPI_KEY else 0.3
+        time.sleep(step_delay)
         cr_result = search_crossref(title, authors)
         result["checks"].append(cr_result)
         if cr_result["found"]:
@@ -587,7 +745,7 @@ def check_reference(ref: dict) -> dict:
         # For book chapters ("in Book Title"), also try searching the book title
         book_title = _extract_book_title(raw)
         if book_title:
-            time.sleep(0.3)
+            time.sleep(step_delay)
             book_result = search_google_scholar(book_title, authors)
             book_result["source"] = "google_scholar_book"
             result["checks"].append(book_result)
@@ -595,6 +753,7 @@ def check_reference(ref: dict) -> dict:
                 return _apply_match(result, ref, book_result)
 
         # Last resort: Google web search
+        time.sleep(step_delay)
         google_result = search_google(title, authors, raw)
         result["checks"].append(google_result)
         if google_result["found"]:
@@ -607,6 +766,8 @@ def check_reference(ref: dict) -> dict:
 
 def check_references(refs: list[dict], progress_callback=None) -> list[dict]:
     """Check a list of references. Returns results for each."""
+    # Use longer delay when scraping (no API key) to avoid rate limits
+    delay = 1.5 if not SERPAPI_KEY else 0.3
     results = []
     for i, ref in enumerate(refs):
         result = check_reference(ref)
@@ -614,5 +775,5 @@ def check_references(refs: list[dict], progress_callback=None) -> list[dict]:
         if progress_callback:
             progress_callback(i + 1, len(refs), result)
         if i < len(refs) - 1:
-            time.sleep(0.3)
+            time.sleep(delay)
     return results
