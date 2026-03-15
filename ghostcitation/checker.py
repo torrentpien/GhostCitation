@@ -12,6 +12,7 @@ Distinguishes between:
 import os
 import re
 import time
+import unicodedata
 import logging
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus
@@ -151,14 +152,18 @@ def verify_doi(doi: str) -> dict:
 # CrossRef title search
 # ---------------------------------------------------------------------------
 
-def search_crossref(title: str, author: str = "") -> dict:
-    """Search CrossRef by title (and optionally author)."""
+def _strip_accents(text: str) -> str:
+    """Remove diacritical marks from text for API compatibility."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _crossref_query(title: str, author: str = "") -> dict | None:
+    """Execute a single CrossRef query and return the best matching item."""
     try:
-        params = {"query.title": title, "rows": 3}
+        params = {"query.title": title, "rows": 5}
         if author:
-            first_author = author.split(",")[0].split("&")[0].strip()
-            if len(first_author) > 1:
-                params["query.author"] = first_author
+            params["query.author"] = _strip_accents(author)
         resp = _SESSION.get(
             CROSSREF_SEARCH_URL,
             params=params,
@@ -171,12 +176,12 @@ def search_crossref(title: str, author: str = "") -> dict:
                 item_title = (item.get("title") or [""])[0]
                 sim = _similarity(title, item_title)
                 if sim >= 0.65:
-                    authors = _extract_authors_from_crossref(item)
+                    authors_list = _extract_authors_from_crossref(item)
                     year = _extract_year_from_crossref(item)
                     return {
                         "found": True,
                         "title": item_title,
-                        "authors": authors,
+                        "authors": authors_list,
                         "year": year,
                         "doi": item.get("DOI", ""),
                         "title_similarity": round(sim, 3),
@@ -184,6 +189,27 @@ def search_crossref(title: str, author: str = "") -> dict:
                     }
     except Exception as e:
         logger.warning("CrossRef search failed for '%s': %s", title, e)
+    return None
+
+
+def search_crossref(title: str, author: str = "") -> dict:
+    """Search CrossRef by title (and optionally author).
+
+    Tries with author first; if no match, retries without author filter
+    since CrossRef author data can be unreliable.
+    """
+    if author:
+        first_author = author.split(",")[0].split("&")[0].strip()
+        if len(first_author) > 1:
+            result = _crossref_query(title, first_author)
+            if result:
+                return result
+
+    # Retry without author filter
+    result = _crossref_query(title)
+    if result:
+        return result
+
     return {"found": False, "source": "crossref_search"}
 
 
@@ -460,6 +486,26 @@ def _analyze_match(ref: dict, match: dict) -> dict:
 # Main check logic
 # ---------------------------------------------------------------------------
 
+def _extract_book_title(raw: str) -> str | None:
+    """Extract a book title from a book chapter reference.
+
+    Looks for patterns like:
+    - "in Book Title" (APA/ASA style)
+    - "In: Book Title" (various styles)
+    - "In Book Title, edited by ..."
+    """
+    # "in" or "In" followed by the book title
+    m = re.search(
+        r"\b[Ii]n[:：]?\s+(.+?)(?:\.\s|,\s*(?:edited|ed\.|pp\.|Vol\.)|\s*[（(]\s*pp\.)",
+        raw,
+    )
+    if m:
+        book = m.group(1).strip().rstrip(".")
+        if len(book) > 10:
+            return book
+    return None
+
+
 def _apply_match(result: dict, ref: dict, match: dict) -> dict:
     """Apply a match result to the output, running mismatch analysis."""
     analysis = _analyze_match(ref, match)
@@ -526,19 +572,29 @@ def check_reference(ref: dict) -> dict:
         if cr_result["found"]:
             return _apply_match(result, ref, cr_result)
     else:
-        # Academic: CrossRef first, then Google Scholar
-        cr_result = search_crossref(title, authors)
-        result["checks"].append(cr_result)
-        if cr_result["found"]:
-            return _apply_match(result, ref, cr_result)
-
-        time.sleep(0.5)
+        # Academic: Google Scholar first (better coverage), then CrossRef
         gs_result = search_google_scholar(title, authors)
         result["checks"].append(gs_result)
         if gs_result["found"]:
             return _apply_match(result, ref, gs_result)
 
-        # Last resort for academic: try Google web search
+        time.sleep(0.3)
+        cr_result = search_crossref(title, authors)
+        result["checks"].append(cr_result)
+        if cr_result["found"]:
+            return _apply_match(result, ref, cr_result)
+
+        # For book chapters ("in Book Title"), also try searching the book title
+        book_title = _extract_book_title(raw)
+        if book_title:
+            time.sleep(0.3)
+            book_result = search_google_scholar(book_title, authors)
+            book_result["source"] = "google_scholar_book"
+            result["checks"].append(book_result)
+            if book_result["found"]:
+                return _apply_match(result, ref, book_result)
+
+        # Last resort: Google web search
         google_result = search_google(title, authors, raw)
         result["checks"].append(google_result)
         if google_result["found"]:
