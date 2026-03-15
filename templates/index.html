@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GhostCitation — 參考文獻真偽檢測</title>
+    <title>GhostCitation</title>
     <style>
         :root {
             --bg: #0f172a;
@@ -50,6 +50,29 @@
         header p {
             color: var(--text-muted);
             font-size: 1.05rem;
+        }
+
+        .lang-switch {
+            position: absolute;
+            top: 1rem;
+            right: 1.5rem;
+        }
+
+        .lang-switch button {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 0.3rem 0.7rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .lang-switch button:hover,
+        .lang-switch button.active {
+            color: var(--accent);
+            border-color: var(--accent);
         }
 
         .upload-zone {
@@ -236,23 +259,28 @@
 </head>
 <body>
     <div class="container">
+        <div class="lang-switch">
+            <button id="btnEn" class="active" onclick="setLang('en')">EN</button>
+            <button id="btnZh" onclick="setLang('zh')">ZH</button>
+        </div>
+
         <header>
             <h1>GhostCitation</h1>
-            <p>上傳論文，自動檢測參考文獻是否為 AI 捏造</p>
+            <p data-i18n="subtitle"></p>
         </header>
 
         <div class="upload-zone" id="uploadZone">
             <span class="icon">&#128196;</span>
-            <p>拖曳檔案至此處，或點擊選擇檔案</p>
-            <p class="formats">支援格式：PDF、DOCX（上限 20 MB）</p>
+            <p data-i18n="dropzone"></p>
+            <p class="formats" data-i18n="formats"></p>
             <input type="file" id="fileInput" accept=".pdf,.docx">
         </div>
 
         <div class="api-key-section">
-            <label for="scraperApiKeyInput">ScraperAPI Key（用於 Google Scholar 爬蟲查詢，選填）</label>
-            <input type="password" id="scraperApiKeyInput" placeholder="輸入 ScraperAPI Key...">
-            <label for="apiKeyInput" style="margin-top: 0.6rem">SerpAPI Key（用於 Google Scholar API 查詢，選填）</label>
-            <input type="password" id="apiKeyInput" placeholder="輸入 SerpAPI Key...">
+            <label for="scraperApiKeyInput" data-i18n="scraperapi_label"></label>
+            <input type="password" id="scraperApiKeyInput" data-i18n-placeholder="scraperapi_placeholder">
+            <label for="apiKeyInput" style="margin-top: 0.6rem" data-i18n="serpapi_label"></label>
+            <input type="password" id="apiKeyInput" data-i18n-placeholder="serpapi_placeholder">
         </div>
 
         <div class="progress-bar" id="progressBar">
@@ -265,19 +293,19 @@
             <div class="summary">
                 <div class="summary-card">
                     <div class="num" id="totalCount">0</div>
-                    <div class="label">總共</div>
+                    <div class="label" data-i18n="total"></div>
                 </div>
                 <div class="summary-card">
                     <div class="num verified" id="verifiedCount">0</div>
-                    <div class="label">已驗證</div>
+                    <div class="label" data-i18n="verified"></div>
                 </div>
                 <div class="summary-card">
                     <div class="num misattributed" id="misattributedCount">0</div>
-                    <div class="label">引用有誤</div>
+                    <div class="label" data-i18n="misattributed"></div>
                 </div>
                 <div class="summary-card">
                     <div class="num fabricated" id="fabricatedCount">0</div>
-                    <div class="label">疑似捏造</div>
+                    <div class="label" data-i18n="fabricated"></div>
                 </div>
             </div>
         </div>
@@ -285,13 +313,131 @@
         <div class="results" id="results"></div>
 
         <footer>
-            <p>GhostCitation — 開源參考文獻驗證工具 |
-                <a href="https://github.com/torrentpien/GhostCitation" target="_blank">GitHub</a>
-            </p>
+            <p data-i18n="footer_text"></p>
         </footer>
     </div>
 
     <script>
+        // ---- i18n ----
+        const I18N = {
+            en: {
+                subtitle: "Upload a paper to detect AI-fabricated references",
+                dropzone: "Drop file here, or click to select",
+                formats: "Supported formats: PDF, DOCX (max 20 MB)",
+                scraperapi_label: "ScraperAPI Key (for Google Scholar scraping, optional)",
+                scraperapi_placeholder: "Enter ScraperAPI Key...",
+                serpapi_label: "SerpAPI Key (for Google Scholar API, optional)",
+                serpapi_placeholder: "Enter SerpAPI Key...",
+                total: "Total",
+                verified: "Verified",
+                misattributed: "Misattributed",
+                fabricated: "Suspected Fake",
+                footer_text: 'GhostCitation — Open-source reference verification tool | <a href="https://github.com/torrentpien/GhostCitation" target="_blank">GitHub</a>',
+                // dynamic strings
+                only_pdf_docx: "Only PDF and DOCX files are supported",
+                parsing: (name) => `Parsing references in "${name}"...`,
+                upload_fail: "Upload failed",
+                upload_error: "Error during upload",
+                found_refs: (n) => `Found ${n} references, verifying...`,
+                check_fail: "Verification failed",
+                check_error: "Error during verification",
+                check_done: "Verification complete!",
+                verdict_verified: "Verified",
+                verdict_misattributed: "Misattributed",
+                verdict_fabricated: "Suspected Fake",
+                type_academic: "Academic",
+                type_non_academic: "Non-academic",
+                label_type: "Type",
+                label_matched_title: "Matched title",
+                label_actual_authors: "Actual authors",
+                label_actual_year: "Actual year",
+                label_source_link: "Source link",
+                label_correct: "Correct",
+                label_sources: "Sources",
+                mismatch_title: (sim) => `Title mismatch (similarity ${sim})`,
+                mismatch_authors: (overlap) => `Author mismatch (overlap ${overlap})`,
+                mismatch_year: (claimed, actual) => `Year mismatch (listed ${claimed}, actual ${actual})`,
+                no_file: "No file selected",
+                no_refs: "No references section found",
+                no_data: "Missing reference data",
+            },
+            zh: {
+                subtitle: "\u4e0a\u50b3\u8ad6\u6587\uff0c\u81ea\u52d5\u6aa2\u6e2c\u53c3\u8003\u6587\u737b\u662f\u5426\u70ba AI \u634f\u9020",
+                dropzone: "\u62d6\u66f3\u6a94\u6848\u81f3\u6b64\u8655\uff0c\u6216\u9ede\u64ca\u9078\u64c7\u6a94\u6848",
+                formats: "\u652f\u63f4\u683c\u5f0f\uff1aPDF\u3001DOCX\uff08\u4e0a\u9650 20 MB\uff09",
+                scraperapi_label: "ScraperAPI Key\uff08\u7528\u65bc Google Scholar \u722c\u87f2\u67e5\u8a62\uff0c\u9078\u586b\uff09",
+                scraperapi_placeholder: "\u8f38\u5165 ScraperAPI Key...",
+                serpapi_label: "SerpAPI Key\uff08\u7528\u65bc Google Scholar API \u67e5\u8a62\uff0c\u9078\u586b\uff09",
+                serpapi_placeholder: "\u8f38\u5165 SerpAPI Key...",
+                total: "\u7e3d\u5171",
+                verified: "\u5df2\u9a57\u8b49",
+                misattributed: "\u5f15\u7528\u6709\u8aa4",
+                fabricated: "\u7591\u4f3c\u634f\u9020",
+                footer_text: 'GhostCitation \u2014 \u958b\u6e90\u53c3\u8003\u6587\u737b\u9a57\u8b49\u5de5\u5177 | <a href="https://github.com/torrentpien/GhostCitation" target="_blank">GitHub</a>',
+                only_pdf_docx: "\u50c5\u652f\u63f4 PDF \u548c DOCX \u6a94\u6848",
+                parsing: (name) => `\u6b63\u5728\u89e3\u6790\u300c${name}\u300d\u4e2d\u7684\u53c3\u8003\u6587\u737b...`,
+                upload_fail: "\u4e0a\u50b3\u5931\u6557",
+                upload_error: "\u4e0a\u50b3\u904e\u7a0b\u767c\u751f\u932f\u8aa4",
+                found_refs: (n) => `\u627e\u5230 ${n} \u7b46\u53c3\u8003\u6587\u737b\uff0c\u958b\u59cb\u9a57\u8b49...`,
+                check_fail: "\u9a57\u8b49\u5931\u6557",
+                check_error: "\u9a57\u8b49\u904e\u7a0b\u767c\u751f\u932f\u8aa4",
+                check_done: "\u9a57\u8b49\u5b8c\u6210\uff01",
+                verdict_verified: "\u5df2\u9a57\u8b49",
+                verdict_misattributed: "\u5f15\u7528\u6709\u8aa4",
+                verdict_fabricated: "\u7591\u4f3c\u634f\u9020",
+                type_academic: "\u5b78\u8853\u6587\u737b",
+                type_non_academic: "\u975e\u5b78\u8853\u6587\u737b",
+                label_type: "\u985e\u578b",
+                label_matched_title: "\u6bd4\u5c0d\u6a19\u984c",
+                label_actual_authors: "\u5be6\u969b\u4f5c\u8005",
+                label_actual_year: "\u5be6\u969b\u5e74\u4efd",
+                label_source_link: "\u4f86\u6e90\u9023\u7d50",
+                label_correct: "\u6b63\u78ba",
+                label_sources: "\u67e5\u8a62\u4f86\u6e90",
+                mismatch_title: (sim) => `\u6a19\u984c\u4e0d\u5b8c\u5168\u5339\u914d\uff08\u76f8\u4f3c\u5ea6 ${sim}\uff09`,
+                mismatch_authors: (overlap) => `\u4f5c\u8005\u4e0d\u7b26\uff08\u5339\u914d\u7387 ${overlap}\uff09`,
+                mismatch_year: (claimed, actual) => `\u5e74\u4efd\u4e0d\u7b26\uff08\u6a19\u793a ${claimed}\uff0c\u5be6\u969b ${actual}\uff09`,
+                no_file: "\u672a\u9078\u64c7\u6a94\u6848",
+                no_refs: "\u627e\u4e0d\u5230\u53c3\u8003\u6587\u737b\u5340\u6bb5",
+                no_data: "\u7f3a\u5c11\u53c3\u8003\u6587\u737b\u8cc7\u6599",
+            },
+        };
+
+        let currentLang = 'en';
+
+        function t(key, ...args) {
+            const val = I18N[currentLang][key];
+            if (typeof val === 'function') return val(...args);
+            return val || key;
+        }
+
+        function setLang(lang) {
+            currentLang = lang;
+            localStorage.setItem('ghostcitation_lang', lang);
+            document.getElementById('btnEn').classList.toggle('active', lang === 'en');
+            document.getElementById('btnZh').classList.toggle('active', lang === 'zh');
+            document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
+            document.title = 'GhostCitation';
+            // Update all data-i18n elements
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                const val = I18N[currentLang][key];
+                if (val) el.innerHTML = val;
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                const val = I18N[currentLang][key];
+                if (val) el.placeholder = val;
+            });
+        }
+
+        // Init language from localStorage or default to English
+        (function() {
+            const saved = localStorage.getItem('ghostcitation_lang');
+            setLang(saved || 'en');
+        })();
+
+        // ---- App logic ----
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
         const status = document.getElementById('status');
@@ -330,7 +476,7 @@
         async function handleFile(file) {
             const ext = file.name.split('.').pop().toLowerCase();
             if (!['pdf', 'docx'].includes(ext)) {
-                status.textContent = '僅支援 PDF 和 DOCX 檔案';
+                status.textContent = t('only_pdf_docx');
                 return;
             }
 
@@ -339,7 +485,7 @@
             summarySection.classList.add('hidden');
             progressBar.style.display = 'block';
             progressFill.style.width = '10%';
-            status.textContent = `正在解析「${file.name}」中的參考文獻...`;
+            status.textContent = t('parsing', file.name);
 
             // Upload and extract
             const formData = new FormData();
@@ -350,15 +496,15 @@
                 const resp = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await resp.json();
                 if (!resp.ok) {
-                    status.textContent = data.error || '上傳失敗';
+                    status.textContent = data.error || t('upload_fail');
                     progressBar.style.display = 'none';
                     return;
                 }
                 refs = data.references;
-                status.textContent = `找到 ${data.count} 筆參考文獻，開始驗證...`;
+                status.textContent = t('found_refs', data.count);
                 progressFill.style.width = '30%';
             } catch (e) {
-                status.textContent = '上傳過程發生錯誤';
+                status.textContent = t('upload_error');
                 progressBar.style.display = 'none';
                 return;
             }
@@ -380,14 +526,14 @@
                 progressFill.style.width = '100%';
 
                 if (!resp.ok) {
-                    status.textContent = data.error || '驗證失敗';
+                    status.textContent = data.error || t('check_fail');
                     return;
                 }
 
-                status.textContent = '驗證完成！';
+                status.textContent = t('check_done');
                 displayResults(data);
             } catch (e) {
-                status.textContent = '驗證過程發生錯誤';
+                status.textContent = t('check_error');
             }
         }
 
@@ -400,15 +546,17 @@
             document.getElementById('verifiedCount').textContent = summary.verified;
             document.getElementById('misattributedCount').textContent = summary.misattributed;
             document.getElementById('fabricatedCount').textContent = summary.fabricated;
+            // Re-apply i18n to summary labels
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                const val = I18N[currentLang][key];
+                if (val) el.innerHTML = val;
+            });
 
             // Result cards
             resultsDiv.innerHTML = '';
             results.forEach((r, i) => {
-                const verdictLabel = {
-                    'verified': '已驗證',
-                    'misattributed': '引用有誤',
-                    'fabricated': '疑似捏造',
-                }[r.verdict] || r.verdict;
+                const verdictLabel = t('verdict_' + r.verdict);
 
                 const badgeClass = {
                     'verified': 'badge-verified',
@@ -419,33 +567,42 @@
                 let detailsHtml = '';
 
                 // Show reference type
-                const typeLabel = r.ref_type === 'non_academic' ? '非學術文獻' : '學術文獻';
-                detailsHtml += `<div class="ref-details">類型: ${typeLabel}</div>`;
+                const typeLabel = r.ref_type === 'non_academic' ? t('type_non_academic') : t('type_academic');
+                detailsHtml += `<div class="ref-details">${t('label_type')}: ${typeLabel}</div>`;
 
                 // Show verified match info
                 if (r.verified_title) {
-                    detailsHtml += `<div class="ref-details">&#10004; 比對標題: ${escapeHtml(r.verified_title)}</div>`;
+                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_matched_title')}: ${escapeHtml(r.verified_title)}</div>`;
                 }
                 if (r.verified_authors && r.verified_authors.length > 0) {
                     const authStr = r.verified_authors.slice(0, 4).join('; ');
                     const suffix = r.verified_authors.length > 4 ? ' et al.' : '';
-                    detailsHtml += `<div class="ref-details">&#10004; 實際作者: ${escapeHtml(authStr + suffix)}</div>`;
+                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_authors')}: ${escapeHtml(authStr + suffix)}</div>`;
                 }
                 if (r.verified_year) {
-                    detailsHtml += `<div class="ref-details">&#10004; 實際年份: ${escapeHtml(r.verified_year)}</div>`;
+                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_year')}: ${escapeHtml(r.verified_year)}</div>`;
                 }
                 if (r.verified_url) {
-                    detailsHtml += `<div class="ref-details">&#10004; 來源連結: <a href="${escapeHtml(r.verified_url)}" target="_blank" style="color:var(--accent)">${escapeHtml(r.verified_url)}</a></div>`;
+                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_source_link')}: <a href="${escapeHtml(r.verified_url)}" target="_blank" style="color:var(--accent)">${escapeHtml(r.verified_url)}</a></div>`;
                 }
 
                 // Show mismatches
                 if (r.mismatches && r.mismatches.length > 0) {
                     let mismatchHtml = '<div class="mismatch-list">';
                     r.mismatches.forEach(m => {
+                        let desc = m.description;
+                        // Use i18n mismatch descriptions
+                        if (m.field === 'title') {
+                            desc = t('mismatch_title', (m.similarity * 100).toFixed(0) + '%');
+                        } else if (m.field === 'authors') {
+                            desc = t('mismatch_authors', (m.overlap * 100).toFixed(0) + '%');
+                        } else if (m.field === 'year') {
+                            desc = t('mismatch_year', m.claimed, m.actual);
+                        }
                         mismatchHtml += `<div class="mismatch-item">`;
-                        mismatchHtml += `<span class="field-label">&#9888; ${escapeHtml(m.description)}</span>`;
+                        mismatchHtml += `<span class="field-label">&#9888; ${escapeHtml(desc)}</span>`;
                         if (m.actual) {
-                            mismatchHtml += `<br><span class="actual-value">正確: ${escapeHtml(m.actual)}</span>`;
+                            mismatchHtml += `<br><span class="actual-value">${t('label_correct')}: ${escapeHtml(m.actual)}</span>`;
                         }
                         mismatchHtml += `</div>`;
                     });
@@ -458,7 +615,7 @@
                 }
                 const sources = r.checks ? r.checks.map(c => c.source).join(', ') : '';
                 if (sources) {
-                    detailsHtml += `<div class="ref-details">查詢來源: ${escapeHtml(sources)}</div>`;
+                    detailsHtml += `<div class="ref-details">${t('label_sources')}: ${escapeHtml(sources)}</div>`;
                 }
 
                 const card = document.createElement('div');
