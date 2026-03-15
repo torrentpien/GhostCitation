@@ -79,10 +79,14 @@ def check():
 
     refs = data["references"]
 
-    # Allow passing SerpAPI key from frontend
+    # Allow passing API keys from frontend
     serpapi_key = data.get("serpapi_key", "")
     if serpapi_key:
         checker.SERPAPI_KEY = serpapi_key
+
+    scraperapi_key = data.get("scraperapi_key", "")
+    if scraperapi_key:
+        checker.SCRAPERAPI_KEY = scraperapi_key
 
     results = check_references(refs)
 
