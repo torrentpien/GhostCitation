@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Section header patterns
 _HEADER_PATTERNS = [
-    r"(?i)(?:^|\n)\s*(References|Bibliography|Works\s+Cited|Literature\s+Cited|參考文獻|參考書目|参考文献)\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*(References?|Bibliography|Works\s+Cited|Literature\s+Cited|參考文獻|參考書目|参考文献)\s*(?:\n|$)",
 ]
 
 
@@ -143,8 +143,11 @@ def parse_references(ref_section: str) -> list[dict]:
 # Pattern matching the start of an author-year reference entry
 _AUTHOR_YEAR_START = re.compile(
     r"^(?:"
-    # English: "Lastname, F." or "Lastname, F. M.,"
+    # APA style: "Lastname, F." or "Lastname, F. M.,"
     r"[A-Z\u00C0-\u024F][a-z\u00C0-\u024F]+(?:[-'][A-Z\u00C0-\u024F][a-z\u00C0-\u024F]+)*,\s+[A-Z]\."
+    r"|"
+    # ASA/Chicago style: "Lastname, Firstname" (full given name, not initial)
+    r"[A-Z\u00C0-\u024F][a-z\u00C0-\u024F]+(?:[-'][A-Z\u00C0-\u024F][a-z\u00C0-\u024F]+)*,\s+[A-Z][a-z]{2,}"
     r"|"
     # CJK author: Chinese chars (2-4) followed by （year）or (year)
     r"[\u4e00-\u9fff\u3400-\u4dbf]{2,4}\s*[（(]\d{4}"
@@ -159,7 +162,10 @@ def _looks_like_complete_ref(text: str) -> bool:
     AND ends with something that looks like a reference ending:
     page numbers, DOI, URL, publisher, volume/issue, or closing punctuation.
     """
+    # Try parenthesized year first, then bare year (ASA style: ". 2024. ")
     m = re.search(r"[（(]\d{4}[a-z]?[）)]", text)
+    if not m:
+        m = re.search(r"\.\s+(\d{4}[a-z]?)\.\s", text)
     if not m:
         return False
     after_year = text[m.end():]
@@ -200,9 +206,28 @@ def _looks_like_complete_ref(text: str) -> bool:
     return len(clean) > 200
 
 
+def _has_year_anywhere(text: str) -> bool:
+    """Check if text contains a year pattern (parenthesized or bare)."""
+    return bool(re.search(r"(?:[（(]\d{4}[a-z]?[）)]|\.\s+\d{4}[a-z]?\.\s)", text))
+
+
 def _parse_author_year_refs(ref_section: str) -> list[str]:
     """Parse author-year style references by detecting entry boundaries."""
     lines = ref_section.split("\n")
+    non_blank = [l.strip() for l in lines if l.strip()]
+
+    # Heuristic: if most non-blank lines individually contain a year
+    # and start with an author pattern, treat each line as a separate reference
+    # (common in DOCX and well-formatted documents)
+    if len(non_blank) >= 3:
+        lines_with_year = sum(1 for l in non_blank if _has_year_anywhere(l))
+        lines_with_author = sum(1 for l in non_blank if _AUTHOR_YEAR_START.match(l))
+        ratio_year = lines_with_year / len(non_blank)
+        ratio_author = lines_with_author / len(non_blank)
+        if ratio_year >= 0.7 and ratio_author >= 0.6:
+            return non_blank
+
+    # Otherwise: multi-line entries, use buffer-based parsing
     raw_refs = []
     current = []
 
@@ -211,12 +236,10 @@ def _parse_author_year_refs(ref_section: str) -> list[str]:
         if not stripped:
             continue
 
-        # Check if this line starts a new reference entry
         is_new_entry = bool(_AUTHOR_YEAR_START.match(stripped))
 
         if is_new_entry and current:
             combined = " ".join(current)
-            # Only split if the current buffer is a complete reference
             if _looks_like_complete_ref(combined):
                 raw_refs.append(combined)
                 current = [stripped]
@@ -244,7 +267,11 @@ def _extract_year(text: str) -> str | None:
     m = re.search(r"[（(](\d{4})[a-z]?[）)]", text)
     if m:
         return m.group(1)
-    # Bare year
+    # ASA/Chicago style: ". 2024. " or ". 2024a. "
+    m = re.search(r"\.\s+((?:19|20)\d{2})[a-z]?\.\s", text)
+    if m:
+        return m.group(1)
+    # Bare year fallback
     m = re.search(r"\b((?:19|20)\d{2})\b", text)
     if m:
         return m.group(1)
@@ -258,13 +285,19 @@ def _extract_title(text: str) -> str:
     if m and len(m.group(1)) > 10:
         return m.group(1).strip()
 
-    # Try: Author (Year). Title. Journal ...
+    # APA style: Author (Year). Title. Journal ...
     m = re.search(r"[）)]\.\s*(.+?)[\.\?]", text)
     if m and len(m.group(1)) > 10:
         return m.group(1).strip()
 
-    # Try: Author (Year) Title. Journal ...
+    # APA style: Author (Year) Title. Journal ...
     m = re.search(r"[）)]\s+(.+?)[\.\?]", text)
+    if m and len(m.group(1)) > 10:
+        return m.group(1).strip()
+
+    # ASA/Chicago style: Author. Year. Title. Journal ...
+    # or: Author. Year. Title: Subtitle. Place: Publisher.
+    m = re.search(r"\.\s+\d{4}[a-z]?\.\s+(.+?)[\.\?]", text)
     if m and len(m.group(1)) > 10:
         return m.group(1).strip()
 
@@ -281,8 +314,13 @@ def _extract_title(text: str) -> str:
 
 def _extract_authors(text: str) -> str:
     """Extract author names (first author at minimum)."""
-    # Text before first year in parentheses (full-width or half-width)
+    # APA style: text before year in parentheses (full-width or half-width)
     m = re.match(r"(.+?)\s*[（(]\d{4}", text)
+    if m:
+        return m.group(1).strip().rstrip(",").rstrip(".")
+
+    # ASA/Chicago style: text before ". Year."
+    m = re.match(r"(.+?)\.\s+\d{4}[a-z]?\.", text)
     if m:
         return m.group(1).strip().rstrip(",").rstrip(".")
 
