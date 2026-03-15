@@ -29,6 +29,7 @@ CROSSREF_SEARCH_URL = "https://api.crossref.org/works"
 SERPAPI_URL = "https://serpapi.com/search"
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +231,10 @@ _SCRAPE_HEADERS = {
 
 
 def _scrape_google_scholar(title: str, author: str = "") -> dict:
-    """Scrape Google Scholar directly when no SerpAPI key is available."""
+    """Scrape Google Scholar via ScraperAPI proxy or direct fallback."""
+    if not SCRAPERAPI_KEY:
+        return {"found": False, "source": "google_scholar", "error": "no_api_key"}
+
     query = title
     if author:
         first_author = author.split(",")[0].split("&")[0].strip()
@@ -238,10 +242,15 @@ def _scrape_google_scholar(title: str, author: str = "") -> dict:
             query = f"{title} {first_author}"
 
     try:
-        url = "https://scholar.google.com/scholar"
-        params = {"q": query, "hl": "en", "num": 5}
+        # Use ScraperAPI as proxy to avoid blocks
+        target_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}&hl=en&num=5"
+        api_url = "https://api.scraperapi.com"
+        params = {
+            "api_key": SCRAPERAPI_KEY,
+            "url": target_url,
+        }
         resp = _SESSION.get(
-            url, params=params, headers=_SCRAPE_HEADERS, timeout=20,
+            api_url, params=params, headers=_SCRAPE_HEADERS, timeout=60,
         )
 
         if resp.status_code == 200:
@@ -296,17 +305,20 @@ def _scrape_google_scholar(title: str, author: str = "") -> dict:
                 }
 
         elif resp.status_code == 429:
-            logger.warning("Google Scholar scrape rate-limited")
+            logger.warning("ScraperAPI rate-limited for Google Scholar")
             return {"found": False, "error": "rate_limited", "source": "google_scholar_scrape"}
 
     except Exception as e:
-        logger.warning("Google Scholar scrape failed for '%s': %s", title, e)
+        logger.warning("ScraperAPI Google Scholar failed for '%s': %s", title, e)
 
     return {"found": False, "source": "google_scholar_scrape"}
 
 
 def _scrape_google(title: str, author: str = "") -> dict:
-    """Scrape Google web search directly when no SerpAPI key is available."""
+    """Scrape Google web search via ScraperAPI proxy or direct fallback."""
+    if not SCRAPERAPI_KEY:
+        return {"found": False, "source": "google", "error": "no_api_key"}
+
     query = f'"{title}"'
     if author and len(author) > 2:
         first_author = author.split(",")[0].split("&")[0].strip()
@@ -314,10 +326,14 @@ def _scrape_google(title: str, author: str = "") -> dict:
             query += f" {first_author}"
 
     try:
-        url = "https://www.google.com/search"
-        params = {"q": query, "hl": "zh-TW", "num": 5}
+        target_url = f"https://www.google.com/search?q={quote_plus(query)}&hl=zh-TW&num=5"
+        api_url = "https://api.scraperapi.com"
+        params = {
+            "api_key": SCRAPERAPI_KEY,
+            "url": target_url,
+        }
         resp = _SESSION.get(
-            url, params=params, headers=_SCRAPE_HEADERS, timeout=20,
+            api_url, params=params, headers=_SCRAPE_HEADERS, timeout=60,
         )
 
         if resp.status_code == 200:

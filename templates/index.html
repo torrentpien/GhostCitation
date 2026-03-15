@@ -249,7 +249,9 @@
         </div>
 
         <div class="api-key-section">
-            <label for="apiKeyInput">SerpAPI Key（用於 Google Scholar 查詢，選填）</label>
+            <label for="scraperApiKeyInput">ScraperAPI Key（用於 Google Scholar 爬蟲查詢，選填）</label>
+            <input type="password" id="scraperApiKeyInput" placeholder="輸入 ScraperAPI Key...">
+            <label for="apiKeyInput" style="margin-top: 0.6rem">SerpAPI Key（用於 Google Scholar API 查詢，選填）</label>
             <input type="password" id="apiKeyInput" placeholder="輸入 SerpAPI Key...">
         </div>
 
@@ -298,6 +300,7 @@
         const summarySection = document.getElementById('summarySection');
         const resultsDiv = document.getElementById('results');
         const apiKeyInput = document.getElementById('apiKeyInput');
+        const scraperApiKeyInput = document.getElementById('scraperApiKeyInput');
 
         uploadZone.addEventListener('click', () => fileInput.click());
 
@@ -363,10 +366,15 @@
             // Check references (pass API key if provided)
             try {
                 const apiKey = apiKeyInput.value.trim();
+                const scraperApiKey = scraperApiKeyInput.value.trim();
                 const resp = await fetch('/check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ references: refs, serpapi_key: apiKey }),
+                    body: JSON.stringify({
+                        references: refs,
+                        serpapi_key: apiKey,
+                        scraperapi_key: scraperApiKey,
+                    }),
                 });
                 const data = await resp.json();
                 progressFill.style.width = '100%';
