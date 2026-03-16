@@ -692,12 +692,15 @@ def _apply_match(result: dict, ref: dict, match: dict) -> dict:
     return result
 
 
-def check_reference(ref: dict) -> dict:
+def check_reference(ref: dict, step_callback=None) -> dict:
     """Check a single reference using multiple sources.
 
     Routes non-academic references (media, government, think tank) through
     Google web search first, and academic references through CrossRef /
     Google Scholar.
+
+    step_callback: optional callable(source_name, status) called before/after
+    each verification step. status is 'trying' or 'found' or 'not_found'.
 
     Returns a result dict with verdict:
     - 'verified': found and metadata matches
@@ -724,37 +727,51 @@ def check_reference(ref: dict) -> dict:
         "verdict": "fabricated",
     }
 
+    def _notify(source, status):
+        if step_callback:
+            step_callback(source, status)
+
     # 1. If DOI is present, verify it first (always academic)
     if doi:
+        _notify("crossref_doi", "trying")
         doi_result = verify_doi(doi)
         result["checks"].append(doi_result)
+        _notify("crossref_doi", "found" if doi_result["found"] else "not_found")
         if doi_result["found"]:
             return _apply_match(result, ref, doi_result)
 
     # 2. Route based on reference type
     if ref_type == "non_academic":
         # Non-academic: try Google web search first
+        _notify("google", "trying")
         google_result = search_google(title, authors, raw)
         result["checks"].append(google_result)
+        _notify("google", "found" if google_result["found"] else "not_found")
         if google_result["found"]:
             return _apply_match(result, ref, google_result)
 
         # Fallback: also try CrossRef (some reports have DOIs)
+        _notify("crossref", "trying")
         cr_result = search_crossref(title, authors)
         result["checks"].append(cr_result)
+        _notify("crossref", "found" if cr_result["found"] else "not_found")
         if cr_result["found"]:
             return _apply_match(result, ref, cr_result)
     else:
         # Academic: Google Scholar first (better coverage), then CrossRef
+        _notify("google_scholar", "trying")
         gs_result = search_google_scholar(title, authors)
         result["checks"].append(gs_result)
+        _notify("google_scholar", "found" if gs_result["found"] else "not_found")
         if gs_result["found"]:
             return _apply_match(result, ref, gs_result)
 
         step_delay = 1.0 if not SERPAPI_KEY else 0.3
         time.sleep(step_delay)
+        _notify("crossref", "trying")
         cr_result = search_crossref(title, authors)
         result["checks"].append(cr_result)
+        _notify("crossref", "found" if cr_result["found"] else "not_found")
         if cr_result["found"]:
             return _apply_match(result, ref, cr_result)
 
@@ -762,16 +779,20 @@ def check_reference(ref: dict) -> dict:
         book_title = _extract_book_title(raw)
         if book_title:
             time.sleep(step_delay)
+            _notify("google_scholar_book", "trying")
             book_result = search_google_scholar(book_title, authors)
             book_result["source"] = "google_scholar_book"
             result["checks"].append(book_result)
+            _notify("google_scholar_book", "found" if book_result["found"] else "not_found")
             if book_result["found"]:
                 return _apply_match(result, ref, book_result)
 
         # Last resort: Google web search
         time.sleep(step_delay)
+        _notify("google", "trying")
         google_result = search_google(title, authors, raw)
         result["checks"].append(google_result)
+        _notify("google", "found" if google_result["found"] else "not_found")
         if google_result["found"]:
             return _apply_match(result, ref, google_result)
 
@@ -780,13 +801,21 @@ def check_reference(ref: dict) -> dict:
     return result
 
 
-def check_references(refs: list[dict], progress_callback=None) -> list[dict]:
-    """Check a list of references. Returns results for each."""
+def check_references(refs: list[dict], progress_callback=None,
+                     step_callback=None) -> list[dict]:
+    """Check a list of references. Returns results for each.
+
+    progress_callback: called(index, total, result) after each ref is done.
+    step_callback: called(ref_index, source, status) for each verification step.
+    """
     # Use longer delay when scraping (no API key) to avoid rate limits
     delay = 1.5 if not SERPAPI_KEY else 0.3
     results = []
     for i, ref in enumerate(refs):
-        result = check_reference(ref)
+        ref_step_cb = None
+        if step_callback:
+            ref_step_cb = lambda source, status, idx=i: step_callback(idx, source, status)
+        result = check_reference(ref, step_callback=ref_step_cb)
         results.append(result)
         if progress_callback:
             progress_callback(i + 1, len(refs), result)

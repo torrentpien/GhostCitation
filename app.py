@@ -5,7 +5,7 @@ import uuid
 import json
 import logging
 
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.utils import secure_filename
 
 from ghostcitation.extractor import extract_references
@@ -38,14 +38,14 @@ def index():
 @app.route("/upload", methods=["POST"])
 def upload():
     if "file" not in request.files:
-        return jsonify({"error": "未選擇檔案"}), 400
+        return jsonify({"error": "No file selected"}), 400
 
     file = request.files["file"]
     if file.filename == "":
-        return jsonify({"error": "未選擇檔案"}), 400
+        return jsonify({"error": "No file selected"}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "僅支援 PDF 和 DOCX 檔案"}), 400
+        return jsonify({"error": "Only PDF and DOCX files are supported"}), 400
 
     filename = secure_filename(file.filename)
     unique_name = f"{uuid.uuid4().hex}_{filename}"
@@ -56,14 +56,14 @@ def upload():
         refs = extract_references(file_path)
     except Exception as e:
         logger.exception("Failed to extract references")
-        return jsonify({"error": f"無法解析檔案: {e}"}), 500
+        return jsonify({"error": f"Failed to parse file: {e}"}), 500
     finally:
         # Clean up uploaded file
         if os.path.exists(file_path):
             os.remove(file_path)
 
     if not refs:
-        return jsonify({"error": "找不到參考文獻區段，請確認檔案包含 References 或參考文獻章節"}), 400
+        return jsonify({"error": "No references section found. Ensure the file contains a References or Bibliography section."}), 400
 
     return jsonify({
         "references": refs,
@@ -75,7 +75,7 @@ def upload():
 def check():
     data = request.get_json()
     if not data or "references" not in data:
-        return jsonify({"error": "缺少參考文獻資料"}), 400
+        return jsonify({"error": "Missing reference data"}), 400
 
     refs = data["references"]
 
@@ -88,19 +88,91 @@ def check():
     if scraperapi_key:
         checker.SCRAPERAPI_KEY = scraperapi_key
 
-    results = check_references(refs)
+    def generate():
+        """Stream SSE events for real-time progress."""
+        def step_cb(ref_index, source, status):
+            event = {
+                "type": "step",
+                "ref_index": ref_index,
+                "source": source,
+                "status": status,
+            }
+            yield f"data: {json.dumps(event)}\n\n"
 
-    summary = {
-        "total": len(results),
-        "verified": sum(1 for r in results if r["verdict"] == "verified"),
-        "misattributed": sum(1 for r in results if r["verdict"] == "misattributed"),
-        "fabricated": sum(1 for r in results if r["verdict"] == "fabricated"),
-    }
+        # We need to collect step events and yield them
+        # Since check_references is synchronous, use a queue-like approach
+        events = []
 
-    return jsonify({
-        "results": results,
-        "summary": summary,
-    })
+        def buffered_step_cb(ref_index, source, status):
+            events.append({
+                "type": "step",
+                "ref_index": ref_index,
+                "source": source,
+                "status": status,
+            })
+
+        def progress_cb(index, total, result):
+            events.append({
+                "type": "progress",
+                "ref_index": index - 1,
+                "current": index,
+                "total": total,
+                "result": result,
+            })
+
+        # Run check in a thread-like manner using generator
+        # Since Flask streaming needs a generator, we use a different approach:
+        # Check one reference at a time and yield events
+        all_results = []
+        delay = 1.5 if not checker.SERPAPI_KEY else 0.3
+
+        for i, ref in enumerate(refs):
+            step_events = []
+
+            def ref_step_cb(source, status):
+                step_events.append({
+                    "type": "step",
+                    "ref_index": i,
+                    "source": source,
+                    "status": status,
+                })
+
+            result = checker.check_reference(ref, step_callback=ref_step_cb)
+            all_results.append(result)
+
+            # Yield all step events for this reference
+            for evt in step_events:
+                yield f"data: {json.dumps(evt)}\n\n"
+
+            # Yield the completed reference result
+            progress_evt = {
+                "type": "result",
+                "ref_index": i,
+                "current": i + 1,
+                "total": len(refs),
+                "result": result,
+            }
+            yield f"data: {json.dumps(progress_evt)}\n\n"
+
+            if i < len(refs) - 1:
+                import time
+                time.sleep(delay)
+
+        # Yield final summary
+        summary = {
+            "total": len(all_results),
+            "verified": sum(1 for r in all_results if r["verdict"] == "verified"),
+            "misattributed": sum(1 for r in all_results if r["verdict"] == "misattributed"),
+            "fabricated": sum(1 for r in all_results if r["verdict"] == "fabricated"),
+        }
+        done_evt = {
+            "type": "done",
+            "summary": summary,
+            "results": all_results,
+        }
+        yield f"data: {json.dumps(done_evt)}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream")
 
 
 if __name__ == "__main__":

@@ -221,6 +221,56 @@
             margin-bottom: 0.3rem;
         }
 
+        .ref-card.pending {
+            opacity: 0.6;
+        }
+
+        .ref-card.checking {
+            border-color: var(--accent);
+            opacity: 1;
+        }
+
+        .ref-card.done {
+            opacity: 1;
+        }
+
+        .step-log {
+            margin-top: 0.5rem;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .step-line {
+            padding: 0.15rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .step-icon {
+            display: inline-block;
+            width: 1rem;
+            text-align: center;
+        }
+
+        .step-trying .step-icon { color: var(--accent); }
+        .step-found .step-icon { color: var(--green); }
+        .step-not_found .step-icon { color: var(--text-muted); }
+
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
         .mismatch-list {
             margin-top: 0.6rem;
             padding: 0.6rem 0.8rem;
@@ -360,6 +410,15 @@
                 no_file: "No file selected",
                 no_refs: "No references section found",
                 no_data: "Missing reference data",
+                checking_ref: (i, total) => `Checking reference ${i}/${total}...`,
+                source_crossref_doi: "CrossRef (DOI)",
+                source_crossref: "CrossRef",
+                source_google_scholar: "Google Scholar",
+                source_google_scholar_book: "Google Scholar (book title)",
+                source_google: "Google Web Search",
+                step_trying: "searching...",
+                step_found: "found",
+                step_not_found: "not found",
             },
             zh: {
                 subtitle: "\u4e0a\u50b3\u8ad6\u6587\uff0c\u81ea\u52d5\u6aa2\u6e2c\u53c3\u8003\u6587\u737b\u662f\u5426\u70ba AI \u634f\u9020",
@@ -400,6 +459,15 @@
                 no_file: "\u672a\u9078\u64c7\u6a94\u6848",
                 no_refs: "\u627e\u4e0d\u5230\u53c3\u8003\u6587\u737b\u5340\u6bb5",
                 no_data: "\u7f3a\u5c11\u53c3\u8003\u6587\u737b\u8cc7\u6599",
+                checking_ref: (i, total) => `正在驗證第 ${i}/${total} 筆文獻...`,
+                source_crossref_doi: "CrossRef (DOI)",
+                source_crossref: "CrossRef",
+                source_google_scholar: "Google Scholar",
+                source_google_scholar_book: "Google Scholar（書名查詢）",
+                source_google: "Google 網頁搜尋",
+                step_trying: "查詢中...",
+                step_found: "已找到",
+                step_not_found: "未找到",
             },
         };
 
@@ -509,7 +577,28 @@
                 return;
             }
 
-            // Check references (pass API key if provided)
+            // Create placeholder cards for all references
+            resultsDiv.innerHTML = '';
+            summarySection.classList.remove('hidden');
+            document.getElementById('totalCount').textContent = refs.length;
+            document.getElementById('verifiedCount').textContent = 0;
+            document.getElementById('misattributedCount').textContent = 0;
+            document.getElementById('fabricatedCount').textContent = 0;
+
+            refs.forEach((ref, i) => {
+                const card = document.createElement('div');
+                card.className = 'ref-card pending';
+                card.id = `ref-card-${i}`;
+                card.innerHTML = `
+                    <div class="ref-number">#${i + 1}</div>
+                    <span class="verdict-badge" style="background:var(--border);color:var(--text-muted)">...</span>
+                    <div class="ref-raw">${escapeHtml(ref.raw || '')}</div>
+                    <div class="step-log" id="step-log-${i}"></div>
+                `;
+                resultsDiv.appendChild(card);
+            });
+
+            // Check references via SSE stream
             try {
                 const apiKey = apiKeyInput.value.trim();
                 const scraperApiKey = scraperApiKeyInput.value.trim();
@@ -522,112 +611,170 @@
                         scraperapi_key: scraperApiKey,
                     }),
                 });
-                const data = await resp.json();
-                progressFill.style.width = '100%';
 
                 if (!resp.ok) {
-                    status.textContent = data.error || t('check_fail');
+                    const errData = await resp.json().catch(() => ({}));
+                    status.textContent = errData.error || t('check_fail');
+                    progressBar.style.display = 'none';
                     return;
                 }
 
-                status.textContent = t('check_done');
-                displayResults(data);
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let verdictCounts = { verified: 0, misattributed: 0, fabricated: 0 };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Parse SSE lines
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        let evt;
+                        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+                        if (evt.type === 'step') {
+                            handleStepEvent(evt);
+                        } else if (evt.type === 'result') {
+                            handleResultEvent(evt, refs, verdictCounts);
+                            const pct = 30 + (evt.current / evt.total) * 70;
+                            progressFill.style.width = pct + '%';
+                            status.textContent = t('checking_ref', evt.current, evt.total);
+                        } else if (evt.type === 'done') {
+                            progressFill.style.width = '100%';
+                            status.textContent = t('check_done');
+                        }
+                    }
+                }
             } catch (e) {
                 status.textContent = t('check_error');
             }
         }
 
-        function displayResults(data) {
-            const { results, summary } = data;
+        function handleStepEvent(evt) {
+            const log = document.getElementById(`step-log-${evt.ref_index}`);
+            const card = document.getElementById(`ref-card-${evt.ref_index}`);
+            if (!log || !card) return;
 
-            // Summary
-            summarySection.classList.remove('hidden');
-            document.getElementById('totalCount').textContent = summary.total;
-            document.getElementById('verifiedCount').textContent = summary.verified;
-            document.getElementById('misattributedCount').textContent = summary.misattributed;
-            document.getElementById('fabricatedCount').textContent = summary.fabricated;
-            // Re-apply i18n to summary labels
-            document.querySelectorAll('[data-i18n]').forEach(el => {
-                const key = el.getAttribute('data-i18n');
-                const val = I18N[currentLang][key];
-                if (val) el.innerHTML = val;
-            });
+            card.className = 'ref-card checking';
 
-            // Result cards
-            resultsDiv.innerHTML = '';
-            results.forEach((r, i) => {
-                const verdictLabel = t('verdict_' + r.verdict);
+            const sourceName = t('source_' + evt.source) || evt.source;
 
-                const badgeClass = {
-                    'verified': 'badge-verified',
-                    'misattributed': 'badge-misattributed',
-                    'fabricated': 'badge-fabricated',
-                }[r.verdict] || '';
-
-                let detailsHtml = '';
-
-                // Show reference type
-                const typeLabel = r.ref_type === 'non_academic' ? t('type_non_academic') : t('type_academic');
-                detailsHtml += `<div class="ref-details">${t('label_type')}: ${typeLabel}</div>`;
-
-                // Show verified match info
-                if (r.verified_title) {
-                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_matched_title')}: ${escapeHtml(r.verified_title)}</div>`;
+            if (evt.status === 'trying') {
+                // Add a new step line with spinner
+                const line = document.createElement('div');
+                line.className = 'step-line step-trying';
+                line.id = `step-${evt.ref_index}-${evt.source}`;
+                line.innerHTML = `<span class="step-icon"><span class="spinner"></span></span> ${escapeHtml(sourceName)} ${t('step_trying')}`;
+                log.appendChild(line);
+                // Scroll card into view
+                card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } else {
+                // Update the existing step line
+                const line = document.getElementById(`step-${evt.ref_index}-${evt.source}`);
+                if (line) {
+                    if (evt.status === 'found') {
+                        line.className = 'step-line step-found';
+                        line.innerHTML = `<span class="step-icon">&#10004;</span> ${escapeHtml(sourceName)} — ${t('step_found')}`;
+                    } else {
+                        line.className = 'step-line step-not_found';
+                        line.innerHTML = `<span class="step-icon">&#10007;</span> ${escapeHtml(sourceName)} — ${t('step_not_found')}`;
+                    }
                 }
-                if (r.verified_authors && r.verified_authors.length > 0) {
-                    const authStr = r.verified_authors.slice(0, 4).join('; ');
-                    const suffix = r.verified_authors.length > 4 ? ' et al.' : '';
-                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_authors')}: ${escapeHtml(authStr + suffix)}</div>`;
-                }
-                if (r.verified_year) {
-                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_year')}: ${escapeHtml(r.verified_year)}</div>`;
-                }
-                if (r.verified_url) {
-                    detailsHtml += `<div class="ref-details">&#10004; ${t('label_source_link')}: <a href="${escapeHtml(r.verified_url)}" target="_blank" style="color:var(--accent)">${escapeHtml(r.verified_url)}</a></div>`;
-                }
+            }
+        }
 
-                // Show mismatches
-                if (r.mismatches && r.mismatches.length > 0) {
-                    let mismatchHtml = '<div class="mismatch-list">';
-                    r.mismatches.forEach(m => {
-                        let desc = m.description;
-                        // Use i18n mismatch descriptions
-                        if (m.field === 'title') {
-                            desc = t('mismatch_title', (m.similarity * 100).toFixed(0) + '%');
-                        } else if (m.field === 'authors') {
-                            desc = t('mismatch_authors', (m.overlap * 100).toFixed(0) + '%');
-                        } else if (m.field === 'year') {
-                            desc = t('mismatch_year', m.claimed, m.actual);
-                        }
-                        mismatchHtml += `<div class="mismatch-item">`;
-                        mismatchHtml += `<span class="field-label">&#9888; ${escapeHtml(desc)}</span>`;
-                        if (m.actual) {
-                            mismatchHtml += `<br><span class="actual-value">${t('label_correct')}: ${escapeHtml(m.actual)}</span>`;
-                        }
-                        mismatchHtml += `</div>`;
-                    });
-                    mismatchHtml += '</div>';
-                    detailsHtml += mismatchHtml;
-                }
+        function handleResultEvent(evt, refs, verdictCounts) {
+            const card = document.getElementById(`ref-card-${evt.ref_index}`);
+            if (!card) return;
 
-                if (r.doi) {
-                    detailsHtml += `<div class="ref-details">DOI: ${escapeHtml(r.doi)}</div>`;
-                }
-                const sources = r.checks ? r.checks.map(c => c.source).join(', ') : '';
-                if (sources) {
-                    detailsHtml += `<div class="ref-details">${t('label_sources')}: ${escapeHtml(sources)}</div>`;
-                }
+            const r = evt.result;
+            card.className = 'ref-card done';
 
-                const card = document.createElement('div');
-                card.className = 'ref-card';
-                card.innerHTML = `
-                    <div class="ref-number">#${i + 1}</div>
-                    <span class="verdict-badge ${badgeClass}">${verdictLabel}</span>
-                    <div class="ref-raw">${escapeHtml(r.raw)}</div>
-                    ${detailsHtml}
-                `;
-                resultsDiv.appendChild(card);
-            });
+            // Update verdict counts
+            if (r.verdict in verdictCounts) {
+                verdictCounts[r.verdict]++;
+            }
+            document.getElementById('verifiedCount').textContent = verdictCounts.verified;
+            document.getElementById('misattributedCount').textContent = verdictCounts.misattributed;
+            document.getElementById('fabricatedCount').textContent = verdictCounts.fabricated;
+
+            const verdictLabel = t('verdict_' + r.verdict);
+            const badgeClass = {
+                'verified': 'badge-verified',
+                'misattributed': 'badge-misattributed',
+                'fabricated': 'badge-fabricated',
+            }[r.verdict] || '';
+
+            // Update the badge
+            const badge = card.querySelector('.verdict-badge');
+            if (badge) {
+                badge.className = `verdict-badge ${badgeClass}`;
+                badge.textContent = verdictLabel;
+                badge.style.background = '';
+                badge.style.color = '';
+            }
+
+            // Build details HTML
+            let detailsHtml = '';
+            const typeLabel = r.ref_type === 'non_academic' ? t('type_non_academic') : t('type_academic');
+            detailsHtml += `<div class="ref-details">${t('label_type')}: ${typeLabel}</div>`;
+
+            if (r.verified_title) {
+                detailsHtml += `<div class="ref-details">&#10004; ${t('label_matched_title')}: ${escapeHtml(r.verified_title)}</div>`;
+            }
+            if (r.verified_authors && r.verified_authors.length > 0) {
+                const authStr = r.verified_authors.slice(0, 4).join('; ');
+                const suffix = r.verified_authors.length > 4 ? ' et al.' : '';
+                detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_authors')}: ${escapeHtml(authStr + suffix)}</div>`;
+            }
+            if (r.verified_year) {
+                detailsHtml += `<div class="ref-details">&#10004; ${t('label_actual_year')}: ${escapeHtml(r.verified_year)}</div>`;
+            }
+            if (r.verified_url) {
+                detailsHtml += `<div class="ref-details">&#10004; ${t('label_source_link')}: <a href="${escapeHtml(r.verified_url)}" target="_blank" style="color:var(--accent)">${escapeHtml(r.verified_url)}</a></div>`;
+            }
+
+            if (r.mismatches && r.mismatches.length > 0) {
+                let mismatchHtml = '<div class="mismatch-list">';
+                r.mismatches.forEach(m => {
+                    let desc = m.description;
+                    if (m.field === 'title') {
+                        desc = t('mismatch_title', (m.similarity * 100).toFixed(0) + '%');
+                    } else if (m.field === 'authors') {
+                        desc = t('mismatch_authors', (m.overlap * 100).toFixed(0) + '%');
+                    } else if (m.field === 'year') {
+                        desc = t('mismatch_year', m.claimed, m.actual);
+                    }
+                    mismatchHtml += `<div class="mismatch-item">`;
+                    mismatchHtml += `<span class="field-label">&#9888; ${escapeHtml(desc)}</span>`;
+                    if (m.actual) {
+                        mismatchHtml += `<br><span class="actual-value">${t('label_correct')}: ${escapeHtml(m.actual)}</span>`;
+                    }
+                    mismatchHtml += `</div>`;
+                });
+                mismatchHtml += '</div>';
+                detailsHtml += mismatchHtml;
+            }
+
+            if (r.doi) {
+                detailsHtml += `<div class="ref-details">DOI: ${escapeHtml(r.doi)}</div>`;
+            }
+            const sources = r.checks ? r.checks.map(c => c.source).join(', ') : '';
+            if (sources) {
+                detailsHtml += `<div class="ref-details">${t('label_sources')}: ${escapeHtml(sources)}</div>`;
+            }
+
+            // Insert details after the step-log
+            const stepLog = card.querySelector('.step-log');
+            if (stepLog) {
+                stepLog.insertAdjacentHTML('afterend', detailsHtml);
+            }
         }
 
         function escapeHtml(str) {
