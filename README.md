@@ -25,7 +25,7 @@ Upload a PDF or DOCX academic paper, and GhostCitation will automatically extrac
 pip install -r requirements.txt
 
 # Start the server
-python app.py
+py app.py
 ```
 
 Open your browser to http://localhost:5000
@@ -91,7 +91,7 @@ Without either key, only CrossRef verification is available.
 pip install -r requirements.txt
 
 # 啟動伺服器
-python app.py
+py app.py
 ```
 
 開啟瀏覽器前往 http://localhost:5000
