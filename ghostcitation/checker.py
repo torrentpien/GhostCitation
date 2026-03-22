@@ -433,7 +433,7 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
 
             logger.info("[Apify] Got %d items", len(items))
 
-            for idx, item in enumerate(items[:5]):
+            for idx, item in enumerate(items[:3]):
                 result_title = item.get("title", "")
                 logger.info("[Apify] Item[%d] title=%r authors=%r year=%r",
                             idx, result_title, item.get("authors", ""), item.get("year", ""))
@@ -452,9 +452,9 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                 )
                 best_sim = max(sim, raw_sim)
                 logger.info("[Apify] Item[%d] sim=%.3f raw_sim=%.3f contained=%s passes=%s",
-                            idx, sim, raw_sim, contained, best_sim >= 0.15 or contained)
+                            idx, sim, raw_sim, contained, best_sim >= 0.55 or contained)
 
-                if best_sim < 0.15 and not contained:
+                if best_sim < 0.55 and not contained:
                     continue
 
                 # Parse authors — format: "Author - Institution, Year"
