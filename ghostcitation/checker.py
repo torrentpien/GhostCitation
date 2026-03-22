@@ -424,7 +424,7 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
         logger.info("[Apify] RECV status=%d content_length=%d",
                      resp.status_code, len(resp.content))
 
-        if resp.status_code == 200:
+        if resp.status_code in (200, 201):
             items = resp.json()
             if not isinstance(items, list):
                 logger.warning("[Apify] Response is not a list: type=%s body=%s",
@@ -435,23 +435,15 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
 
             for idx, item in enumerate(items[:5]):
                 result_title = item.get("title", "")
-                logger.info("[Apify] Item[%d] keys=%s", idx, list(item.keys()))
-                logger.info("[Apify] Item[%d] title=%r", idx, result_title)
-                logger.info("[Apify] Item[%d] authors=%r", idx, item.get("authors", ""))
-                logger.info("[Apify] Item[%d] year=%r", idx, item.get("year", ""))
-                logger.info("[Apify] Item[%d] articleUrl=%r url=%r",
-                            idx, item.get("articleUrl", ""), item.get("url", ""))
+                logger.info("[Apify] Item[%d] title=%r authors=%r year=%r",
+                            idx, result_title, item.get("authors", ""), item.get("year", ""))
 
                 sim = _similarity(title, result_title)
                 raw_sim = _similarity(raw, result_title) if raw else 0
-                logger.info("[Apify] Item[%d] sim=%.3f raw_sim=%.3f", idx, sim, raw_sim)
 
                 norm_result = _normalize(result_title).replace(" ", "")
                 norm_raw = _normalize(raw).replace(" ", "") if raw else ""
                 norm_title = _normalize(title).replace(" ", "")
-
-                logger.info("[Apify] Item[%d] norm_result=%r", idx, norm_result[:80])
-                logger.info("[Apify] Item[%d] norm_title =%r", idx, norm_title[:80])
 
                 contained = (
                     (len(norm_result) > 5 and norm_raw and norm_result in norm_raw)
@@ -459,11 +451,10 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                     or (len(norm_title) > 5 and norm_title in norm_result)
                 )
                 best_sim = max(sim, raw_sim)
-                logger.info("[Apify] Item[%d] contained=%s best_sim=%.3f passes=%s",
-                            idx, contained, best_sim, best_sim >= 0.15 or contained)
+                logger.info("[Apify] Item[%d] sim=%.3f raw_sim=%.3f contained=%s passes=%s",
+                            idx, sim, raw_sim, contained, best_sim >= 0.15 or contained)
 
                 if best_sim < 0.15 and not contained:
-                    logger.info("[Apify] Item[%d] SKIP (below threshold)", idx)
                     continue
 
                 # Parse authors — format: "Author - Institution, Year"
