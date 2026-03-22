@@ -392,7 +392,7 @@ def _scrape_google(title: str, author: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 def _apify_google_scholar(title: str, author: str = "") -> dict:
-    """Search Google Scholar via Apify actor marco.gullo/google-scholar-scraper."""
+    """Search Google Scholar via Apify actor cloud9_ai/google-scholar-scraper."""
     if not APIFY_KEY:
         return {"found": False, "source": "apify_google_scholar", "error": "no_api_key"}
 
@@ -404,17 +404,13 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
 
     try:
         run_url = (
-            f"https://api.apify.com/v2/acts/marco.gullo~google-scholar-scraper"
+            f"https://api.apify.com/v2/acts/cloud9_ai~google-scholar-scraper"
             f"/run-sync-get-dataset-items?token={APIFY_KEY}"
         )
         payload = {
-            "enableDebugDumps": False,
-            "filter": "all",
-            "keyword": query,
-            "maxItems": 3,
-            "proxyOptions": {
-                "useApifyProxy": True,
-            },
+            "includeCitations": True,
+            "includePatents": True,
+            "searchQuery": query,
         }
         resp = _SESSION.post(
             run_url,
@@ -428,14 +424,14 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
             if not isinstance(items, list):
                 items = []
 
-            for item in items[:3]:
+            for item in items[:5]:
                 result_title = item.get("title", "")
                 sim = _similarity(title, result_title)
                 if sim < 0.60:
                     continue
 
                 # Parse authors
-                authors_raw = item.get("authors", "")
+                authors_raw = item.get("authors", "") or item.get("author", "")
                 gs_authors = []
                 if isinstance(authors_raw, str) and authors_raw:
                     gs_authors = [a.strip() for a in authors_raw.split(",") if a.strip()]
@@ -444,10 +440,13 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
 
                 # Year
                 year = None
-                pub_info = item.get("publicationInfo", "") or item.get("year", "")
-                if isinstance(pub_info, str):
-                    year_match = re.search(r"\b((?:19|20)\d{2})\b", pub_info)
-                    year = year_match.group(1) if year_match else None
+                for year_field in ("year", "publicationDate", "publicationInfo"):
+                    val = item.get(year_field, "")
+                    if val:
+                        year_match = re.search(r"\b((?:19|20)\d{2})\b", str(val))
+                        if year_match:
+                            year = year_match.group(1)
+                            break
                 if not year:
                     year_match = re.search(r"\b((?:19|20)\d{2})\b", str(item))
                     year = year_match.group(1) if year_match else None
