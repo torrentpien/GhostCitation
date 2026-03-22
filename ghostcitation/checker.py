@@ -30,6 +30,7 @@ SERPAPI_URL = "https://serpapi.com/search"
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
 SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
+APIFY_KEY = os.environ.get("APIFY_KEY", "")
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +385,93 @@ def _scrape_google(title: str, author: str = "") -> dict:
         logger.warning("Google scrape failed for '%s': %s", title, e)
 
     return {"found": False, "source": "google_scrape"}
+
+
+# ---------------------------------------------------------------------------
+# Apify Google Scholar scraper
+# ---------------------------------------------------------------------------
+
+def _apify_google_scholar(title: str, author: str = "") -> dict:
+    """Search Google Scholar via Apify actor marco.gullo/google-scholar-scraper."""
+    if not APIFY_KEY:
+        return {"found": False, "source": "apify_google_scholar", "error": "no_api_key"}
+
+    query = title
+    if author:
+        first_author = author.split(",")[0].split("&")[0].strip()
+        if len(first_author) > 1:
+            query = f"{title} {first_author}"
+
+    try:
+        run_url = (
+            f"https://api.apify.com/v2/acts/marco.gullo~google-scholar-scraper"
+            f"/run-sync-get-dataset-items?token={APIFY_KEY}"
+        )
+        payload = {
+            "enableDebugDumps": False,
+            "filter": "all",
+            "keyword": query,
+            "maxItems": 3,
+            "proxyOptions": {
+                "useApifyProxy": True,
+            },
+        }
+        resp = _SESSION.post(
+            run_url,
+            json=payload,
+            timeout=120,
+            headers={"Content-Type": "application/json"},
+        )
+
+        if resp.status_code == 200:
+            items = resp.json()
+            if not isinstance(items, list):
+                items = []
+
+            for item in items[:3]:
+                result_title = item.get("title", "")
+                sim = _similarity(title, result_title)
+                if sim < 0.60:
+                    continue
+
+                # Parse authors
+                authors_raw = item.get("authors", "")
+                gs_authors = []
+                if isinstance(authors_raw, str) and authors_raw:
+                    gs_authors = [a.strip() for a in authors_raw.split(",") if a.strip()]
+                elif isinstance(authors_raw, list):
+                    gs_authors = [str(a).strip() for a in authors_raw if a]
+
+                # Year
+                year = None
+                pub_info = item.get("publicationInfo", "") or item.get("year", "")
+                if isinstance(pub_info, str):
+                    year_match = re.search(r"\b((?:19|20)\d{2})\b", pub_info)
+                    year = year_match.group(1) if year_match else None
+                if not year:
+                    year_match = re.search(r"\b((?:19|20)\d{2})\b", str(item))
+                    year = year_match.group(1) if year_match else None
+
+                result_url = item.get("url", "") or item.get("link", "")
+
+                return {
+                    "found": True,
+                    "title": result_title,
+                    "authors": gs_authors,
+                    "year": year,
+                    "url": result_url,
+                    "title_similarity": round(sim, 3),
+                    "source": "apify_google_scholar",
+                }
+
+        elif resp.status_code == 402:
+            logger.warning("Apify usage limit reached")
+            return {"found": False, "error": "usage_limit", "source": "apify_google_scholar"}
+
+    except Exception as e:
+        logger.warning("Apify Google Scholar failed for '%s': %s", title, e)
+
+    return {"found": False, "source": "apify_google_scholar"}
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +855,17 @@ def check_reference(ref: dict, step_callback=None) -> dict:
             return _apply_match(result, ref, gs_result)
 
         step_delay = 1.0 if not SERPAPI_KEY else 0.3
+
+        # Try Apify Google Scholar scraper if available
+        if APIFY_KEY:
+            time.sleep(step_delay)
+            _notify("apify_google_scholar", "trying")
+            apify_result = _apify_google_scholar(title, authors)
+            result["checks"].append(apify_result)
+            _notify("apify_google_scholar", "found" if apify_result["found"] else "not_found")
+            if apify_result["found"]:
+                return _apply_match(result, ref, apify_result)
+
         time.sleep(step_delay)
         _notify("crossref", "trying")
         cr_result = search_crossref(title, authors)

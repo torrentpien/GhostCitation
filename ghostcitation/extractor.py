@@ -467,3 +467,25 @@ def extract_references(file_path: str) -> list[dict]:
         return []
 
     return parse_references(ref_section)
+
+
+def parse_raw_lines(text: str) -> list[dict]:
+    """Parse raw reference text (one reference per line) into ref dicts.
+
+    Used for manual text input where users paste references directly.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    refs = []
+    for line in lines:
+        # Strip leading numbering like "1.", "[1]", "(1)"
+        cleaned = re.sub(r"^\s*(?:\[\d+\]|\(\d+\)|\d+[\.\)]\s*)", "", line).strip()
+        if not cleaned:
+            continue
+        refs.append({
+            "raw": cleaned,
+            "title": _extract_title(cleaned),
+            "authors": _extract_authors(cleaned),
+            "year": _extract_year(cleaned),
+            "doi": _extract_doi(cleaned),
+        })
+    return refs

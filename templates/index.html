@@ -101,6 +101,53 @@
         .upload-zone p { color: var(--text-muted); }
         .upload-zone .formats { font-size: 0.85rem; margin-top: 0.5rem; }
 
+        .or-divider {
+            text-align: center;
+            color: var(--text-muted);
+            margin: 1rem 0;
+            font-size: 0.9rem;
+        }
+
+        .text-input-section {
+            margin-top: 0;
+        }
+
+        .text-input-section textarea {
+            width: 100%;
+            min-height: 120px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0.8rem 1rem;
+            color: var(--text);
+            font-size: 0.9rem;
+            font-family: inherit;
+            resize: vertical;
+            line-height: 1.6;
+        }
+
+        .text-input-section textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .check-btn {
+            display: block;
+            margin: 0.8rem auto 0;
+            padding: 0.6rem 2rem;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .check-btn:hover { background: var(--accent-hover); }
+        .check-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
         .api-key-section {
             margin-top: 1rem;
             text-align: center;
@@ -326,8 +373,17 @@
             <input type="file" id="fileInput" accept=".pdf,.docx">
         </div>
 
+        <div class="or-divider" data-i18n="or_divider"></div>
+
+        <div class="text-input-section">
+            <textarea id="refTextInput" rows="5" data-i18n-placeholder="text_input_placeholder"></textarea>
+            <button class="check-btn" id="checkTextBtn" data-i18n="check_btn"></button>
+        </div>
+
         <div class="api-key-section">
-            <label for="scraperApiKeyInput" data-i18n="scraperapi_label"></label>
+            <label for="apifyKeyInput" data-i18n="apify_label"></label>
+            <input type="password" id="apifyKeyInput" data-i18n-placeholder="apify_placeholder">
+            <label for="scraperApiKeyInput" style="margin-top: 0.6rem" data-i18n="scraperapi_label"></label>
             <input type="password" id="scraperApiKeyInput" data-i18n-placeholder="scraperapi_placeholder">
             <label for="apiKeyInput" style="margin-top: 0.6rem" data-i18n="serpapi_label"></label>
             <input type="password" id="apiKeyInput" data-i18n-placeholder="serpapi_placeholder">
@@ -374,6 +430,11 @@
                 subtitle: "Upload a paper to detect AI-fabricated references",
                 dropzone: "Drop file here, or click to select",
                 formats: "Supported formats: PDF, DOCX (max 20 MB)",
+                or_divider: "— OR paste references directly —",
+                text_input_placeholder: "Paste one or more references here (one per line)...",
+                check_btn: "Check References",
+                apify_label: "Apify API Key (for Google Scholar actor, optional)",
+                apify_placeholder: "Enter Apify API Key...",
                 scraperapi_label: "ScraperAPI Key (for Google Scholar scraping, optional)",
                 scraperapi_placeholder: "Enter ScraperAPI Key...",
                 serpapi_label: "SerpAPI Key (for Google Scholar API, optional)",
@@ -415,15 +476,25 @@
                 source_crossref: "CrossRef",
                 source_google_scholar: "Google Scholar",
                 source_google_scholar_book: "Google Scholar (book title)",
+                source_apify_google_scholar: "Apify Google Scholar",
                 source_google: "Google Web Search",
                 step_trying: "searching...",
                 step_found: "found",
                 step_not_found: "not found",
+                empty_text: "Please enter at least one reference",
+                parsing_text: "Parsing references...",
+                text_parse_fail: "Failed to parse references",
+                text_parse_error: "Error parsing text",
             },
             zh: {
                 subtitle: "\u4e0a\u50b3\u8ad6\u6587\uff0c\u81ea\u52d5\u6aa2\u6e2c\u53c3\u8003\u6587\u737b\u662f\u5426\u70ba AI \u634f\u9020",
                 dropzone: "\u62d6\u66f3\u6a94\u6848\u81f3\u6b64\u8655\uff0c\u6216\u9ede\u64ca\u9078\u64c7\u6a94\u6848",
                 formats: "\u652f\u63f4\u683c\u5f0f\uff1aPDF\u3001DOCX\uff08\u4e0a\u9650 20 MB\uff09",
+                or_divider: "— 或直接貼上文獻 —",
+                text_input_placeholder: "在此貼上一筆或多筆文獻（每行一筆）...",
+                check_btn: "開始驗證",
+                apify_label: "Apify API Key（用於 Google Scholar actor 查詢，選填）",
+                apify_placeholder: "輸入 Apify API Key...",
                 scraperapi_label: "ScraperAPI Key\uff08\u7528\u65bc Google Scholar \u722c\u87f2\u67e5\u8a62\uff0c\u9078\u586b\uff09",
                 scraperapi_placeholder: "\u8f38\u5165 ScraperAPI Key...",
                 serpapi_label: "SerpAPI Key\uff08\u7528\u65bc Google Scholar API \u67e5\u8a62\uff0c\u9078\u586b\uff09",
@@ -464,10 +535,15 @@
                 source_crossref: "CrossRef",
                 source_google_scholar: "Google Scholar",
                 source_google_scholar_book: "Google Scholar（書名查詢）",
+                source_apify_google_scholar: "Apify Google Scholar",
                 source_google: "Google 網頁搜尋",
                 step_trying: "查詢中...",
                 step_found: "已找到",
                 step_not_found: "未找到",
+                empty_text: "請輸入至少一筆文獻",
+                parsing_text: "正在解析文獻...",
+                text_parse_fail: "解析文獻失敗",
+                text_parse_error: "解析文獻時發生錯誤",
             },
         };
 
@@ -515,6 +591,9 @@
         const resultsDiv = document.getElementById('results');
         const apiKeyInput = document.getElementById('apiKeyInput');
         const scraperApiKeyInput = document.getElementById('scraperApiKeyInput');
+        const apifyKeyInput = document.getElementById('apifyKeyInput');
+        const refTextInput = document.getElementById('refTextInput');
+        const checkTextBtn = document.getElementById('checkTextBtn');
 
         uploadZone.addEventListener('click', () => fileInput.click());
 
@@ -540,6 +619,51 @@
                 handleFile(fileInput.files[0]);
             }
         });
+
+        checkTextBtn.addEventListener('click', () => handleTextInput());
+
+        async function handleTextInput() {
+            const text = refTextInput.value.trim();
+            if (!text) {
+                status.textContent = t('empty_text');
+                return;
+            }
+
+            // Reset UI
+            resultsDiv.innerHTML = '';
+            summarySection.classList.add('hidden');
+            progressBar.style.display = 'block';
+            progressFill.style.width = '10%';
+            status.textContent = t('parsing_text');
+            checkTextBtn.disabled = true;
+
+            let refs;
+            try {
+                const resp = await fetch('/parse-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    status.textContent = data.error || t('text_parse_fail');
+                    progressBar.style.display = 'none';
+                    checkTextBtn.disabled = false;
+                    return;
+                }
+                refs = data.references;
+                status.textContent = t('found_refs', data.count);
+                progressFill.style.width = '30%';
+            } catch (e) {
+                status.textContent = t('text_parse_error');
+                progressBar.style.display = 'none';
+                checkTextBtn.disabled = false;
+                return;
+            }
+
+            await checkRefsSSE(refs);
+            checkTextBtn.disabled = false;
+        }
 
         async function handleFile(file) {
             const ext = file.name.split('.').pop().toLowerCase();
@@ -577,6 +701,10 @@
                 return;
             }
 
+            await checkRefsSSE(refs);
+        }
+
+        async function checkRefsSSE(refs) {
             // Create placeholder cards for all references
             resultsDiv.innerHTML = '';
             summarySection.classList.remove('hidden');
@@ -602,6 +730,7 @@
             try {
                 const apiKey = apiKeyInput.value.trim();
                 const scraperApiKey = scraperApiKeyInput.value.trim();
+                const apifyKey = apifyKeyInput.value.trim();
                 const resp = await fetch('/check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -609,6 +738,7 @@
                         references: refs,
                         serpapi_key: apiKey,
                         scraperapi_key: scraperApiKey,
+                        apify_key: apifyKey,
                     }),
                 });
 
