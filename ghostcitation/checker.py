@@ -281,7 +281,8 @@ def _scrape_google_scholar(title: str, author: str = "") -> dict:
                 year = None
                 if info_text:
                     # Format: "Author1, Author2 - Journal, Year - Publisher"
-                    parts = info_text.split(" - ")
+                    # Dash may be ASCII hyphen, en-dash, or em-dash
+                    parts = re.split(r"\s[-–—‐]\s", info_text)
                     if parts:
                         author_part = parts[0].strip()
                         gs_authors = [
@@ -458,10 +459,11 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                     continue
 
                 # Parse authors — format: "Author - Institution, Year"
+                # The dash may be ASCII hyphen, en-dash, or em-dash
                 authors_raw = item.get("authors", "") or item.get("author", "")
                 gs_authors = []
                 if isinstance(authors_raw, str) and authors_raw:
-                    author_part = authors_raw.split(" - ")[0].strip()
+                    author_part = re.split(r"\s[-–—‐]\s", authors_raw)[0].strip()
                     gs_authors = [a.strip() for a in author_part.split(",") if a.strip()
                                   and not re.match(r"^\d{4}$", a.strip())]
                 elif isinstance(authors_raw, list):
