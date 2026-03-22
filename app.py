@@ -8,7 +8,7 @@ import logging
 from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.utils import secure_filename
 
-from ghostcitation.extractor import extract_references
+from ghostcitation.extractor import extract_references, parse_raw_lines
 from ghostcitation import checker
 from ghostcitation.checker import check_references
 
@@ -71,6 +71,23 @@ def upload():
     })
 
 
+@app.route("/parse-text", methods=["POST"])
+def parse_text():
+    data = request.get_json()
+    if not data or "text" not in data:
+        return jsonify({"error": "Missing text data"}), 400
+
+    text = data["text"].strip()
+    if not text:
+        return jsonify({"error": "Empty text"}), 400
+
+    refs = parse_raw_lines(text)
+    if not refs:
+        return jsonify({"error": "No references found in text"}), 400
+
+    return jsonify({"references": refs, "count": len(refs)})
+
+
 @app.route("/check", methods=["POST"])
 def check():
     data = request.get_json()
@@ -87,6 +104,10 @@ def check():
     scraperapi_key = data.get("scraperapi_key", "")
     if scraperapi_key:
         checker.SCRAPERAPI_KEY = scraperapi_key
+
+    apify_key = data.get("apify_key", "")
+    if apify_key:
+        checker.APIFY_KEY = apify_key
 
     def generate():
         """Stream SSE events for real-time progress."""
