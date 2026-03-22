@@ -391,7 +391,7 @@ def _scrape_google(title: str, author: str = "") -> dict:
 # Apify Google Scholar scraper
 # ---------------------------------------------------------------------------
 
-def _apify_google_scholar(title: str, author: str = "") -> dict:
+def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
     """Search Google Scholar via Apify actor cloud9_ai/google-scholar-scraper."""
     if not APIFY_KEY:
         return {"found": False, "source": "apify_google_scholar", "error": "no_api_key"}
@@ -426,19 +426,37 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
 
             for item in items[:5]:
                 result_title = item.get("title", "")
+                # Compare against both extracted title and raw text
+                # (extracted title may be truncated raw text for some formats)
                 sim = _similarity(title, result_title)
-                if sim < 0.60:
+                raw_sim = _similarity(raw, result_title) if raw else 0
+                logger.info(
+                    "Apify match check: sim=%.3f raw_sim=%.3f title=%r result=%r",
+                    sim, raw_sim, title[:60], result_title[:60],
+                )
+                # Also check if result title is contained in raw text
+                # Strip all spaces for CJK containment check
+                norm_result = _normalize(result_title).replace(" ", "")
+                norm_raw = _normalize(raw).replace(" ", "") if raw else ""
+                contained = (len(norm_result) > 5
+                             and norm_raw
+                             and norm_result in norm_raw)
+                best_sim = max(sim, raw_sim)
+                if best_sim < 0.40 and not contained:
                     continue
 
-                # Parse authors
+                # Parse authors — format: "Author - Institution, Year"
                 authors_raw = item.get("authors", "") or item.get("author", "")
                 gs_authors = []
                 if isinstance(authors_raw, str) and authors_raw:
-                    gs_authors = [a.strip() for a in authors_raw.split(",") if a.strip()]
+                    # Split on " - " first to separate author from institution
+                    author_part = authors_raw.split(" - ")[0].strip()
+                    gs_authors = [a.strip() for a in author_part.split(",") if a.strip()
+                                  and not re.match(r"^\d{4}$", a.strip())]
                 elif isinstance(authors_raw, list):
                     gs_authors = [str(a).strip() for a in authors_raw if a]
 
-                # Year
+                # Year — field can be integer or string
                 year = None
                 for year_field in ("year", "publicationDate", "publicationInfo"):
                     val = item.get(year_field, "")
@@ -451,7 +469,9 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
                     year_match = re.search(r"\b((?:19|20)\d{2})\b", str(item))
                     year = year_match.group(1) if year_match else None
 
-                result_url = item.get("url", "") or item.get("link", "")
+                result_url = (item.get("articleUrl", "")
+                              or item.get("url", "")
+                              or item.get("link", ""))
 
                 return {
                     "found": True,
@@ -459,7 +479,7 @@ def _apify_google_scholar(title: str, author: str = "") -> dict:
                     "authors": gs_authors,
                     "year": year,
                     "url": result_url,
-                    "title_similarity": round(sim, 3),
+                    "title_similarity": round(best_sim, 3),
                     "source": "apify_google_scholar",
                 }
 
@@ -859,7 +879,7 @@ def check_reference(ref: dict, step_callback=None) -> dict:
         if APIFY_KEY:
             time.sleep(step_delay)
             _notify("apify_google_scholar", "trying")
-            apify_result = _apify_google_scholar(title, authors)
+            apify_result = _apify_google_scholar(title, authors, raw)
             result["checks"].append(apify_result)
             _notify("apify_google_scholar", "found" if apify_result["found"] else "not_found")
             if apify_result["found"]:
