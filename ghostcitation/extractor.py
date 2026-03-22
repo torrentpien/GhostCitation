@@ -393,6 +393,11 @@ def _extract_title(text: str) -> str:
     if m and len(m.group(1)) > 10:
         return m.group(1).strip()
 
+    # Chinese: Author（Year）。Title。 (Chinese period after parenthesized year)
+    m = re.search(r"[）)][。.]\s*(.+?)[。.]", text)
+    if m and len(m.group(1)) > 2:
+        return m.group(1).strip()
+
     # APA style: Author (Year). Title. Journal ...
     m = re.search(r"[）)]\.\s*(.+?)[\.\?]", text)
     if m and len(m.group(1)) > 10:
@@ -413,11 +418,11 @@ def _extract_title(text: str) -> str:
     if m and len(m.group(1)) > 2:
         return m.group(1).strip()
 
-    # Try: after first period, take next sentence
-    parts = text.split(". ")
+    # Try: after first period (including Chinese period), take next sentence
+    parts = re.split(r"[。.]\s*", text, maxsplit=2)
     if len(parts) >= 2:
-        candidate = parts[1].strip().rstrip(".")
-        if len(candidate) > 10:
+        candidate = parts[1].strip().rstrip(".").rstrip("。")
+        if len(candidate) > 5:
             return candidate
 
     # Fallback
