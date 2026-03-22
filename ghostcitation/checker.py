@@ -438,11 +438,15 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                 # Strip all spaces for CJK containment check
                 norm_result = _normalize(result_title).replace(" ", "")
                 norm_raw = _normalize(raw).replace(" ", "") if raw else ""
-                contained = (len(norm_result) > 5
-                             and norm_raw
-                             and norm_result in norm_raw)
+                norm_title = _normalize(title).replace(" ", "")
+                contained = (
+                    (len(norm_result) > 5 and norm_raw and norm_result in norm_raw)
+                    or (len(norm_result) > 5 and norm_title and norm_result in norm_title)
+                    or (len(norm_title) > 5 and norm_title in norm_result)
+                )
                 best_sim = max(sim, raw_sim)
-                if best_sim < 0.40 and not contained:
+                # Google Scholar results are highly relevant; use a low threshold
+                if best_sim < 0.15 and not contained:
                     continue
 
                 # Parse authors — format: "Author - Institution, Year"
