@@ -402,6 +402,8 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
         if len(first_author) > 1:
             query = f"{title} {first_author}"
 
+    logger.info("[Apify] SEND searchQuery=%r", query)
+
     try:
         run_url = (
             f"https://api.apify.com/v2/acts/cloud9_ai~google-scholar-scraper"
@@ -419,41 +421,55 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
             headers={"Content-Type": "application/json"},
         )
 
+        logger.info("[Apify] RECV status=%d content_length=%d",
+                     resp.status_code, len(resp.content))
+
         if resp.status_code == 200:
             items = resp.json()
             if not isinstance(items, list):
+                logger.warning("[Apify] Response is not a list: type=%s body=%s",
+                               type(items).__name__, str(items)[:500])
                 items = []
 
-            for item in items[:5]:
+            logger.info("[Apify] Got %d items", len(items))
+
+            for idx, item in enumerate(items[:5]):
                 result_title = item.get("title", "")
-                # Compare against both extracted title and raw text
-                # (extracted title may be truncated raw text for some formats)
+                logger.info("[Apify] Item[%d] keys=%s", idx, list(item.keys()))
+                logger.info("[Apify] Item[%d] title=%r", idx, result_title)
+                logger.info("[Apify] Item[%d] authors=%r", idx, item.get("authors", ""))
+                logger.info("[Apify] Item[%d] year=%r", idx, item.get("year", ""))
+                logger.info("[Apify] Item[%d] articleUrl=%r url=%r",
+                            idx, item.get("articleUrl", ""), item.get("url", ""))
+
                 sim = _similarity(title, result_title)
                 raw_sim = _similarity(raw, result_title) if raw else 0
-                logger.info(
-                    "Apify match check: sim=%.3f raw_sim=%.3f title=%r result=%r",
-                    sim, raw_sim, title[:60], result_title[:60],
-                )
-                # Also check if result title is contained in raw text
-                # Strip all spaces for CJK containment check
+                logger.info("[Apify] Item[%d] sim=%.3f raw_sim=%.3f", idx, sim, raw_sim)
+
                 norm_result = _normalize(result_title).replace(" ", "")
                 norm_raw = _normalize(raw).replace(" ", "") if raw else ""
                 norm_title = _normalize(title).replace(" ", "")
+
+                logger.info("[Apify] Item[%d] norm_result=%r", idx, norm_result[:80])
+                logger.info("[Apify] Item[%d] norm_title =%r", idx, norm_title[:80])
+
                 contained = (
                     (len(norm_result) > 5 and norm_raw and norm_result in norm_raw)
                     or (len(norm_result) > 5 and norm_title and norm_result in norm_title)
                     or (len(norm_title) > 5 and norm_title in norm_result)
                 )
                 best_sim = max(sim, raw_sim)
-                # Google Scholar results are highly relevant; use a low threshold
+                logger.info("[Apify] Item[%d] contained=%s best_sim=%.3f passes=%s",
+                            idx, contained, best_sim, best_sim >= 0.15 or contained)
+
                 if best_sim < 0.15 and not contained:
+                    logger.info("[Apify] Item[%d] SKIP (below threshold)", idx)
                     continue
 
                 # Parse authors — format: "Author - Institution, Year"
                 authors_raw = item.get("authors", "") or item.get("author", "")
                 gs_authors = []
                 if isinstance(authors_raw, str) and authors_raw:
-                    # Split on " - " first to separate author from institution
                     author_part = authors_raw.split(" - ")[0].strip()
                     gs_authors = [a.strip() for a in author_part.split(",") if a.strip()
                                   and not re.match(r"^\d{4}$", a.strip())]
@@ -477,6 +493,7 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                               or item.get("url", "")
                               or item.get("link", ""))
 
+                logger.info("[Apify] Item[%d] MATCH → found=True", idx)
                 return {
                     "found": True,
                     "title": result_title,
@@ -487,12 +504,17 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
                     "source": "apify_google_scholar",
                 }
 
+            logger.info("[Apify] No items passed matching → found=False")
+
         elif resp.status_code == 402:
-            logger.warning("Apify usage limit reached")
+            logger.warning("[Apify] Usage limit reached (402)")
             return {"found": False, "error": "usage_limit", "source": "apify_google_scholar"}
+        else:
+            logger.warning("[Apify] Unexpected status %d: %s",
+                           resp.status_code, resp.text[:500])
 
     except Exception as e:
-        logger.warning("Apify Google Scholar failed for '%s': %s", title, e)
+        logger.warning("[Apify] Exception for %r: %s", title[:60], e)
 
     return {"found": False, "source": "apify_google_scholar"}
 
