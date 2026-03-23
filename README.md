@@ -32,27 +32,26 @@ Open your browser to http://localhost:5000
 
 ### Google Scholar Search (Optional)
 
-Google Scholar search supports three methods:
+Google Scholar search supports three methods (searched in the following priority order):
 
-1. **ScraperAPI** (recommended) — Uses [ScraperAPI](https://www.scraperapi.com/) to scrape Google Scholar
+1. **Apify** (highest priority) — Uses [Apify](https://apify.com/) `cloud9_ai/google-scholar-scraper` actor
+   - Enter your Apify API Key in the web UI
+   - Or set the environment variable: `export APIFY_KEY=your_key`
+
+2. **ScraperAPI** — Uses [ScraperAPI](https://www.scraperapi.com/) to scrape Google Scholar
    - Enter your ScraperAPI Key in the web UI
    - Or set the environment variable: `export SCRAPERAPI_KEY=your_key`
 
-2. **SerpAPI** — Uses [SerpAPI](https://serpapi.com/) for Google Scholar API
+3. **SerpAPI** — Uses [SerpAPI](https://serpapi.com/) for Google Scholar API
    - Enter your SerpAPI Key in the web UI
    - Or set the environment variable: `export SERPAPI_KEY=your_key`
-
-3. **Apify** — Uses [Apify](https://apify.com/) `cloud9_ai/google-scholar-scraper` actor as an additional Google Scholar source
-   - Enter your Apify API Key in the web UI
-   - Or set the environment variable: `export APIFY_KEY=your_key`
-   - Used as a fallback when SerpAPI/ScraperAPI finds no match
 
 Without any key, only CrossRef verification is available.
 
 ## Verification Logic
 
 1. If DOI is present → verify via CrossRef API
-2. Academic references → Google Scholar → Apify Google Scholar → CrossRef → book title fallback → Google web search
+2. Academic references → CrossRef → Apify Google Scholar → ScraperAPI → SerpAPI → book title fallback → Google web search
 3. Non-academic references → Google web search → CrossRef
 4. Once a match is found, compare:
    - **Title similarity** < 80% → title mismatch
@@ -103,20 +102,19 @@ py app.py
 
 ### Google Scholar 查詢（選填）
 
-Google Scholar 搜尋支援三種方式：
+Google Scholar 搜尋支援三種方式（依以下優先順序查詢）：
 
-1. **ScraperAPI**（推薦）— 使用 [ScraperAPI](https://www.scraperapi.com/) 爬取 Google Scholar
+1. **Apify**（最高優先）— 使用 [Apify](https://apify.com/) 的 `cloud9_ai/google-scholar-scraper` actor
+   - 在網頁介面輸入 Apify API Key
+   - 或設定環境變數：`export APIFY_KEY=your_key`
+
+2. **ScraperAPI** — 使用 [ScraperAPI](https://www.scraperapi.com/) 爬取 Google Scholar
    - 在網頁介面輸入 ScraperAPI Key
    - 或設定環境變數：`export SCRAPERAPI_KEY=your_key`
 
-2. **SerpAPI** — 使用 [SerpAPI](https://serpapi.com/) 的 Google Scholar API
+3. **SerpAPI** — 使用 [SerpAPI](https://serpapi.com/) 的 Google Scholar API
    - 在網頁介面輸入 SerpAPI Key
    - 或設定環境變數：`export SERPAPI_KEY=your_key`
-
-3. **Apify** — 使用 [Apify](https://apify.com/) 的 `cloud9_ai/google-scholar-scraper` actor 作為額外的 Google Scholar 來源
-   - 在網頁介面輸入 Apify API Key
-   - 或設定環境變數：`export APIFY_KEY=your_key`
-   - 當 SerpAPI/ScraperAPI 未找到結果時，作為備援查詢
 
 不設定任何 Key 也可使用（僅透過 CrossRef 驗證）。
 

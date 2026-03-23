@@ -517,9 +517,9 @@ def _apify_google_scholar(title: str, author: str = "", raw: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 def search_google_scholar(title: str, author: str = "") -> dict:
-    """Search Google Scholar using SerpAPI, with scraping fallback."""
+    """Search Google Scholar using SerpAPI only."""
     if not SERPAPI_KEY:
-        return _scrape_google_scholar(title, author)
+        return {"found": False, "source": "google_scholar", "error": "no_api_key"}
 
     query = title
     if author:
@@ -884,17 +884,18 @@ def check_reference(ref: dict, step_callback=None) -> dict:
         if cr_result["found"]:
             return _apply_match(result, ref, cr_result)
     else:
-        # Academic: Google Scholar first (better coverage), then CrossRef
-        _notify("google_scholar", "trying")
-        gs_result = search_google_scholar(title, authors)
-        result["checks"].append(gs_result)
-        _notify("google_scholar", "found" if gs_result["found"] else "not_found")
-        if gs_result["found"]:
-            return _apply_match(result, ref, gs_result)
+        # Academic: CrossRef → Apify → ScraperAPI → SerpAPI → book fallback → Google web
+        step_delay = 0.3
 
-        step_delay = 1.0 if not SERPAPI_KEY else 0.3
+        # 1. CrossRef
+        _notify("crossref", "trying")
+        cr_result = search_crossref(title, authors)
+        result["checks"].append(cr_result)
+        _notify("crossref", "found" if cr_result["found"] else "not_found")
+        if cr_result["found"]:
+            return _apply_match(result, ref, cr_result)
 
-        # Try Apify Google Scholar scraper if available
+        # 2. Apify Google Scholar scraper
         if APIFY_KEY:
             time.sleep(step_delay)
             _notify("apify_google_scholar", "trying")
@@ -904,27 +905,43 @@ def check_reference(ref: dict, step_callback=None) -> dict:
             if apify_result["found"]:
                 return _apply_match(result, ref, apify_result)
 
-        time.sleep(step_delay)
-        _notify("crossref", "trying")
-        cr_result = search_crossref(title, authors)
-        result["checks"].append(cr_result)
-        _notify("crossref", "found" if cr_result["found"] else "not_found")
-        if cr_result["found"]:
-            return _apply_match(result, ref, cr_result)
+        # 3. ScraperAPI (Google Scholar scraping)
+        if SCRAPERAPI_KEY:
+            time.sleep(step_delay)
+            _notify("google_scholar_scrape", "trying")
+            scrape_result = _scrape_google_scholar(title, authors)
+            result["checks"].append(scrape_result)
+            _notify("google_scholar_scrape", "found" if scrape_result["found"] else "not_found")
+            if scrape_result["found"]:
+                return _apply_match(result, ref, scrape_result)
 
-        # For book chapters ("in Book Title"), also try searching the book title
+        # 4. SerpAPI (Google Scholar API)
+        if SERPAPI_KEY:
+            time.sleep(step_delay)
+            _notify("google_scholar", "trying")
+            gs_result = search_google_scholar(title, authors)
+            result["checks"].append(gs_result)
+            _notify("google_scholar", "found" if gs_result["found"] else "not_found")
+            if gs_result["found"]:
+                return _apply_match(result, ref, gs_result)
+
+        # 5. For book chapters ("in Book Title"), also try searching the book title
         book_title = _extract_book_title(raw)
         if book_title:
             time.sleep(step_delay)
             _notify("google_scholar_book", "trying")
-            book_result = search_google_scholar(book_title, authors)
+            # Use whichever Google Scholar backend is available
+            if SCRAPERAPI_KEY:
+                book_result = _scrape_google_scholar(book_title, authors)
+            else:
+                book_result = search_google_scholar(book_title, authors)
             book_result["source"] = "google_scholar_book"
             result["checks"].append(book_result)
             _notify("google_scholar_book", "found" if book_result["found"] else "not_found")
             if book_result["found"]:
                 return _apply_match(result, ref, book_result)
 
-        # Last resort: Google web search
+        # 6. Last resort: Google web search
         time.sleep(step_delay)
         _notify("google", "trying")
         google_result = search_google(title, authors, raw)
